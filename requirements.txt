@@ -3,4 +3,5 @@ mediapipe~=0.10.31
 
 numpy~=2.2.6
 
-google-auth-oauthlib
+gspread
+google-auth
