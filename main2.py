@@ -18,7 +18,7 @@ import mediapipe as mp
 # 0. CONFIGURAÇÃO DA PÁGINA
 # ==========================================
 st.set_page_config(
-    page_title="Treino Completo AI", 
+    page_title="Análise de Exercícios com Visão Computacional", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
@@ -59,7 +59,7 @@ def login_page():
         </style>
     """, unsafe_allow_html=True)
     
-    st.title("🔒 Login - AI Fitness")
+    st.title("🔒 Login - Análise de Exercícios com Visão Computacional")
     
     with st.container():
         username = st.text_input("Usuário")
@@ -570,3 +570,4 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Concluída!")
         st.video(OUTPUT_PATH, format="video/webm")
+
