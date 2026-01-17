@@ -1,0 +1,4 @@
+opencv-python-headless
+mediapipe~=0.10.31
+
+numpy~=2.2.6
