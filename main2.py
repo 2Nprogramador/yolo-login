@@ -52,6 +52,7 @@ def salvar_config_usuario(username, config_dict):
         try:
             cell = sheet.find(username, in_column=1)
             if cell:
+                # Garante que estamos salvando uma string JSON válida
                 config_json = json.dumps(config_dict)
                 sheet.update_cell(cell.row, 4, config_json)
                 st.toast("✅ Configurações salvas na nuvem!", icon="☁️")
@@ -68,7 +69,8 @@ def carregar_config_usuario(username):
             cell = sheet.find(username, in_column=1)
             if cell:
                 config_json = sheet.cell(cell.row, 4).value
-                if config_json and config_json != "{}":
+                # Verifica se tem conteudo e se é um JSON válido
+                if config_json and len(config_json) > 2:
                     return json.loads(config_json)
         except Exception as e:
             st.error(f"Erro ao carregar: {e}")
@@ -97,6 +99,7 @@ def login_page():
                             st.session_state['user_name'] = user.get('name', username)
                             st.session_state['username'] = username
                             
+                            # Carrega configurações ao logar
                             saved_configs = carregar_config_usuario(username)
                             st.session_state['user_configs'] = saved_configs if saved_configs else {}
                                 
@@ -117,6 +120,7 @@ def login_page():
                     if username in users:
                         st.warning("Usuário já existe.")
                     else:
+                        # Cria conta com config vazia "{}"
                         sheet.append_row([username, hash_senha(password), username, "{}"])
                         st.success("Criado! Faça login.")
             else: st.warning("Preencha tudo.")
@@ -141,6 +145,7 @@ if not st.session_state['logged_in']:
 st.sidebar.write(f"Olá, **{st.session_state['user_name']}** 👋")
 if st.sidebar.button("Sair"):
     st.session_state['logged_in'] = False
+    st.session_state['user_configs'] = {} # Limpa configs locais ao sair
     st.rerun()
 
 st.title("Análise de Exercícios com Visão Computacional")
@@ -199,7 +204,9 @@ col_save, col_load = st.sidebar.columns(2)
 
 # Função auxiliar para pegar valores salvos (ou padrão)
 def get_val(key, default):
+    # A chave é composta: NomeExercicio_NomeVariavel
     full_key = f"{exercise_type}_{key}"
+    # Retorna o valor que está no dicionário de configs carregado
     return st.session_state['user_configs'].get(full_key, default)
 
 user_thresholds = {} 
@@ -284,11 +291,11 @@ elif exercise_type == "Elevação Lateral":
 
 # --- LÓGICA DOS BOTÕES ---
 if col_save.button("💾 Salvar Minhas Configs"):
-    # Atualiza o dicionário da sessão com os valores atuais dos widgets
+    # Salva o estado atual da tela na sessão primeiro
     for key, value in user_thresholds.items():
         st.session_state['user_configs'][f"{exercise_type}_{key}"] = value
     
-    # Envia para o Google Sheets
+    # Envia para a nuvem
     salvar_config_usuario(st.session_state['username'], st.session_state['user_configs'])
 
 if col_load.button("📂 Recarregar Nuvem"):
@@ -299,8 +306,10 @@ if col_load.button("📂 Recarregar Nuvem"):
         # 2. Atualiza a memória de configs
         st.session_state['user_configs'] = configs_nuvem
         
-        # 3. TRUQUE DE RESET: Limpa as variáveis de estado dos widgets para forçar o recarregamento
-        # Isso faz o Streamlit esquecer que o usuário "mexeu" no slider e usar o 'value=' da função get_val
+        # 3. TRUQUE MÁGICO DE RESET:
+        # Limpa as variáveis de estado do Streamlit para o exercício atual.
+        # Isso força o Streamlit a redesenhar os sliders usando o 'value=' padrão (que vem da nuvem)
+        # em vez de usar o valor "lembrado" que o usuário alterou na tela.
         keys_to_clear = [k for k in st.session_state.keys() if k.startswith(exercise_type)]
         for k in keys_to_clear:
             del st.session_state[k]
@@ -474,13 +483,11 @@ if run_btn and video_path:
                     elif angle_abd < user_thresholds['lr_low']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
-                # --- ATUALIZAÇÃO DA UI ---
                 st.session_state.last_state = current_state
                 s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
                 if alert_msg: s_color = (0, 0, 255)
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
-                
                 box_h = 85 if alert_msg else 60
                 cv2.rectangle(frame, (0, 0), (w, box_h), (20, 20, 20), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, s_color, 2)
