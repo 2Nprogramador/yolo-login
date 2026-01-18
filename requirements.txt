@@ -5,3 +5,4 @@ numpy~=2.2.6
 
 gspread
 google-auth
+extra-streamlit-components
