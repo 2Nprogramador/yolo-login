@@ -6,6 +6,10 @@ import tempfile
 import time
 import hashlib
 import json 
+import datetime
+
+# --- BIBLIOTECA DE COOKIES (NOVO) ---
+import extra_streamlit_components as stx
 
 # --- GOOGLE SHEETS ---
 import gspread
@@ -25,7 +29,15 @@ st.set_page_config(
 )
 
 # ==========================================
-# 1. SISTEMA DE LOGIN E BANCO DE DADOS
+# 1. GERENCIADOR DE COOKIES (PERSISTÊNCIA)
+# ==========================================
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
+
+# ==========================================
+# 2. SISTEMA DE LOGIN E BANCO DE DADOS
 # ==========================================
 
 def conectar_gsheets():
@@ -46,13 +58,11 @@ def hash_senha(senha):
 # --- FUNÇÕES PARA SALVAR/CARREGAR CONFIGURAÇÕES ---
 
 def salvar_config_usuario(username, config_dict):
-    """Salva o dicionário de configurações como JSON na planilha"""
     sheet = conectar_gsheets()
     if sheet:
         try:
             cell = sheet.find(username, in_column=1)
             if cell:
-                # Garante que estamos salvando uma string JSON válida
                 config_json = json.dumps(config_dict)
                 sheet.update_cell(cell.row, 4, config_json)
                 st.toast("✅ Configurações salvas na nuvem!", icon="☁️")
@@ -62,21 +72,40 @@ def salvar_config_usuario(username, config_dict):
             st.error(f"Erro ao salvar: {e}")
 
 def carregar_config_usuario(username):
-    """Busca o JSON da planilha e retorna como dicionário"""
     sheet = conectar_gsheets()
     if sheet:
         try:
             cell = sheet.find(username, in_column=1)
             if cell:
                 config_json = sheet.cell(cell.row, 4).value
-                # Verifica se tem conteudo e se é um JSON válido
                 if config_json and len(config_json) > 2:
                     return json.loads(config_json)
         except Exception as e:
-            st.error(f"Erro ao carregar: {e}")
+            # Silencia erros de carregamento na inicialização rápida
+            pass 
     return {}
 
-# --- PÁGINA DE LOGIN ---
+# --- LÓGICA DE LOGIN COM COOKIE ---
+
+# Verifica se o cookie existe para logar automaticamente
+cookie_user = cookie_manager.get(cookie="user_treino_ai")
+
+if 'logged_in' not in st.session_state:
+    # Se achou cookie, loga automaticamente
+    if cookie_user:
+        st.session_state['logged_in'] = True
+        st.session_state['username'] = cookie_user
+        st.session_state['user_name'] = cookie_user # Usa o ID como nome temporário até carregar
+        
+        # Carrega configs silenciosamente
+        saved_configs = carregar_config_usuario(cookie_user)
+        st.session_state['user_configs'] = saved_configs if saved_configs else {}
+    else:
+        st.session_state['logged_in'] = False
+        st.session_state['username'] = ""
+        st.session_state['user_configs'] = {}
+
+# --- TELA DE LOGIN ---
 
 def login_page():
     st.markdown("<h1 style='text-align: center;'>🔒 Login AI Fitness</h1>", unsafe_allow_html=True)
@@ -95,13 +124,18 @@ def login_page():
                     user_found = False
                     for user in records:
                         if str(user['username']) == username and str(user['password']) == hash_senha(password):
+                            
+                            # 1. Configura Sessão
                             st.session_state['logged_in'] = True
                             st.session_state['user_name'] = user.get('name', username)
                             st.session_state['username'] = username
                             
-                            # Carrega configurações ao logar
+                            # 2. Carrega Configs
                             saved_configs = carregar_config_usuario(username)
                             st.session_state['user_configs'] = saved_configs if saved_configs else {}
+                            
+                            # 3. GRAVA O COOKIE (Validade 30 dias)
+                            cookie_manager.set("user_treino_ai", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
                                 
                             st.success("Logado!")
                             time.sleep(1)
@@ -120,38 +154,33 @@ def login_page():
                     if username in users:
                         st.warning("Usuário já existe.")
                     else:
-                        # Cria conta com config vazia "{}"
                         sheet.append_row([username, hash_senha(password), username, "{}"])
                         st.success("Criado! Faça login.")
             else: st.warning("Preencha tudo.")
 
-# --- VERIFICAÇÃO DE SESSÃO ROBUSTA ---
-if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
-if 'username' not in st.session_state: st.session_state['username'] = ""
-if 'user_configs' not in st.session_state: st.session_state['user_configs'] = {}
-
-if st.session_state['logged_in'] and not st.session_state['username']:
-    st.session_state['logged_in'] = False
-    st.rerun()
-
+# Se não estiver logado, exibe login e para
 if not st.session_state['logged_in']:
     login_page()
     st.stop()
 
 # ==========================================
-# 2. APLICAÇÃO PRINCIPAL
+# 3. APLICAÇÃO PRINCIPAL
 # ==========================================
 
-st.sidebar.write(f"Olá, **{st.session_state['user_name']}** 👋")
+st.sidebar.write(f"Olá, **{st.session_state.get('username', 'Atleta')}** 👋")
+
 if st.sidebar.button("Sair"):
+    # Limpa sessão
     st.session_state['logged_in'] = False
-    st.session_state['user_configs'] = {} # Limpa configs locais ao sair
+    st.session_state['user_configs'] = {}
+    # Deleta cookie
+    cookie_manager.delete("user_treino_ai")
     st.rerun()
 
 st.title("Análise de Exercícios com Visão Computacional")
 
 # ==========================================
-# 3. CONSTANTES (FÍSICA)
+# 4. CONSTANTES (FÍSICA)
 # ==========================================
 MOVEMENT_CONSTANTS = {
     "Agachamento Búlgaro": { "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"} },
@@ -168,7 +197,7 @@ MOVEMENT_CONSTANTS = {
 }
 
 # ==========================================
-# 4. FUNÇÕES MATEMÁTICAS E VISUALIZAÇÃO
+# 5. FUNÇÕES MATEMÁTICAS E VISUALIZAÇÃO
 # ==========================================
 def calculate_angle(a, b, c):
     a, b, c = np.array(a), np.array(b), np.array(c)
@@ -192,7 +221,7 @@ def draw_visual_angle(frame, p1, p2, p3, text, color=(255,255,255), label=""):
     cv2.putText(frame, display, (int(p2[0])+15, int(p2[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
 
 # ==========================================
-# 5. SIDEBAR COM LÓGICA DE SALVAR/CARREGAR
+# 6. SIDEBAR COM LÓGICA DE SALVAR/CARREGAR
 # ==========================================
 
 st.sidebar.header("1. Exercício & Configs")
@@ -204,9 +233,7 @@ col_save, col_load = st.sidebar.columns(2)
 
 # Função auxiliar para pegar valores salvos (ou padrão)
 def get_val(key, default):
-    # A chave é composta: NomeExercicio_NomeVariavel
     full_key = f"{exercise_type}_{key}"
-    # Retorna o valor que está no dicionário de configs carregado
     return st.session_state['user_configs'].get(full_key, default)
 
 user_thresholds = {} 
@@ -218,7 +245,7 @@ def render_movement_header():
 def render_safety_header():
     st.sidebar.markdown("### 🛡️ Segurança")
 
-# --- WIDGETS DINÂMICOS (Com chaves 'key=' únicas para permitir reset) ---
+# --- WIDGETS DINÂMICOS ---
 
 if exercise_type == "Agachamento Búlgaro":
     render_movement_header()
@@ -291,29 +318,17 @@ elif exercise_type == "Elevação Lateral":
 
 # --- LÓGICA DOS BOTÕES ---
 if col_save.button("💾 Salvar Minhas Configs"):
-    # Salva o estado atual da tela na sessão primeiro
     for key, value in user_thresholds.items():
         st.session_state['user_configs'][f"{exercise_type}_{key}"] = value
-    
-    # Envia para a nuvem
     salvar_config_usuario(st.session_state['username'], st.session_state['user_configs'])
 
 if col_load.button("📂 Recarregar Nuvem"):
-    # 1. Busca do Sheets
     configs_nuvem = carregar_config_usuario(st.session_state['username'])
-    
     if configs_nuvem:
-        # 2. Atualiza a memória de configs
         st.session_state['user_configs'] = configs_nuvem
-        
-        # 3. TRUQUE MÁGICO DE RESET:
-        # Limpa as variáveis de estado do Streamlit para o exercício atual.
-        # Isso força o Streamlit a redesenhar os sliders usando o 'value=' padrão (que vem da nuvem)
-        # em vez de usar o valor "lembrado" que o usuário alterou na tela.
         keys_to_clear = [k for k in st.session_state.keys() if k.startswith(exercise_type)]
         for k in keys_to_clear:
             del st.session_state[k]
-            
         st.success("Configurações restauradas!")
         time.sleep(0.5)
         st.rerun()
@@ -321,7 +336,7 @@ if col_load.button("📂 Recarregar Nuvem"):
         st.warning("Nenhuma configuração encontrada na nuvem.")
 
 # ==========================================
-# 6. UPLOAD E PROCESSAMENTO
+# 7. UPLOAD E PROCESSAMENTO
 # ==========================================
 st.sidebar.markdown("---")
 uploaded_file = st.sidebar.file_uploader("3. Carregar Vídeo", type=["mp4", "mov", "avi", "webm"])
@@ -483,11 +498,13 @@ if run_btn and video_path:
                     elif angle_abd < user_thresholds['lr_low']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
+                # --- ATUALIZAÇÃO DA UI ---
                 st.session_state.last_state = current_state
                 s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
                 if alert_msg: s_color = (0, 0, 255)
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
+                
                 box_h = 85 if alert_msg else 60
                 cv2.rectangle(frame, (0, 0), (w, box_h), (20, 20, 20), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, s_color, 2)
