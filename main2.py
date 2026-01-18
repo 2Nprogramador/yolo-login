@@ -5,8 +5,9 @@ import os
 import tempfile
 import time
 import hashlib
+import json # <--- IMPORTANTE PARA SALVAR DADOS
 
-# --- NOVAS IMPORTS PARA O GOOGLE SHEETS ---
+# --- GOOGLE SHEETS ---
 import gspread
 from google.oauth2.service_account import Credentials
 
@@ -18,119 +19,128 @@ import mediapipe as mp
 # 0. CONFIGURAÇÃO DA PÁGINA
 # ==========================================
 st.set_page_config(
-    page_title="Análise de Exercícios com Visão Computacional", 
+    page_title="Treino Completo AI", 
     layout="wide", 
     initial_sidebar_state="expanded"
 )
 
 # ==========================================
-# 1. SISTEMA DE LOGIN COM GOOGLE SHEETS
+# 1. SISTEMA DE LOGIN E BANCO DE DADOS
 # ==========================================
 
 def conectar_gsheets():
-    """Conecta ao Google Sheets usando as credenciais do Secrets"""
     scope = ['https://www.googleapis.com/auth/spreadsheets', "https://www.googleapis.com/auth/drive"]
-    
     try:
-        # Carrega credenciais do TOML
         creds_dict = dict(st.secrets["google_sheets_credentials"])
-        
-        # Correção comum: garantir que as quebras de linha da chave privada sejam interpretadas corretamente
         creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
-        
         credentials = Credentials.from_service_account_info(creds_dict, scopes=scope)
         client = gspread.authorize(credentials)
-        
-        # ABRE A PLANILHA PELO NOME. Mude "usuarios_app" para o nome real da sua planilha
         return client.open("usuarios_app").sheet1
     except Exception as e:
-        st.error(f"Erro ao conectar com a planilha. Verifique se o email do robô tem acesso e se o nome está correto. Detalhe: {e}")
+        st.error(f"Erro no Google Sheets: {e}")
         return None
 
 def hash_senha(senha):
-    """Cria um hash SHA256 da senha para segurança"""
     return hashlib.sha256(str.encode(senha)).hexdigest()
 
+# --- FUNÇÕES PARA SALVAR/CARREGAR CONFIGURAÇÕES ---
+
+def salvar_config_usuario(username, config_dict):
+    """Salva o dicionário de configurações como JSON na planilha"""
+    sheet = conectar_gsheets()
+    if sheet:
+        try:
+            # Encontra a célula do usuário na coluna A (username)
+            cell = sheet.find(username, in_column=1)
+            if cell:
+                # Converte o dicionário para Texto JSON
+                config_json = json.dumps(config_dict)
+                # Atualiza a coluna 4 (Coluna D - 'config')
+                sheet.update_cell(cell.row, 4, config_json)
+                st.toast("✅ Configurações salvas na nuvem!", icon="☁️")
+            else:
+                st.error("Usuário não encontrado na planilha.")
+        except Exception as e:
+            st.error(f"Erro ao salvar: {e}")
+
+def carregar_config_usuario(username):
+    """Busca o JSON da planilha e retorna como dicionário"""
+    sheet = conectar_gsheets()
+    if sheet:
+        try:
+            cell = sheet.find(username, in_column=1)
+            if cell:
+                # Pega o valor da coluna 4 (config)
+                config_json = sheet.cell(cell.row, 4).value
+                if config_json:
+                    return json.loads(config_json) # Converte Texto -> Dicionário
+        except Exception as e:
+            st.error(f"Erro ao carregar: {e}")
+    return {} # Retorna vazio se não achar
+
+# --- PÁGINA DE LOGIN ---
+
 def login_page():
-    st.markdown("""
-        <style>
-            .stTextInput input { padding: 10px; }
-            .login-container { max-width: 400px; margin: auto; padding-top: 50px; }
-        </style>
-    """, unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🔒 Login AI Fitness</h1>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1,2,1])
     
-    st.title("🔒 Login - Análise de Exercícios com Visão Computacional")
-    
-    with st.container():
+    with col2:
         username = st.text_input("Usuário")
         password = st.text_input("Senha", type="password")
         
-        col1, col2 = st.columns(2)
-        
-        if col1.button("Entrar", type="primary"):
+        c1, c2 = st.columns(2)
+        if c1.button("Entrar", type="primary", use_container_width=True):
             sheet = conectar_gsheets()
             if sheet:
                 try:
-                    # Pega todos os registros da planilha
                     records = sheet.get_all_records()
-                    
                     user_found = False
                     for user in records:
-                        # Verifica usuario e senha (comparando hash ou texto plano se preferir)
-                        # Nota: Recomendo salvar a senha na planilha já como hash
-                        # Aqui vou comparar hash gerado com o hash da planilha
-                        senha_input_hash = hash_senha(password)
-                        
-                        if str(user['username']) == username and str(user['password']) == senha_input_hash:
+                        if str(user['username']) == username and str(user['password']) == hash_senha(password):
                             st.session_state['logged_in'] = True
                             st.session_state['user_name'] = user.get('name', username)
-                            st.success("Login realizado com sucesso!")
+                            st.session_state['username'] = username # Guarda o ID para salvar depois
+                            
+                            # Tenta carregar configs salvas automaticamente ao logar
+                            saved_configs = carregar_config_usuario(username)
+                            if saved_configs:
+                                st.session_state['user_configs'] = saved_configs
+                            else:
+                                st.session_state['user_configs'] = {}
+                                
+                            st.success("Logado!")
                             time.sleep(1)
                             st.rerun()
                             user_found = True
                             break
-                    
-                    if not user_found:
-                        st.error("Usuário ou senha incorretos.")
-                        
-                except Exception as e:
-                    st.error(f"Erro ao ler dados: {e}")
+                    if not user_found: st.error("Dados incorretos.")
+                except Exception as e: st.error(f"Erro: {e}")
 
-        # Opcional: Botão para criar conta (apenas escreve na planilha)
-        if col2.button("Criar Conta"):
+        if c2.button("Criar Conta", use_container_width=True):
             if username and password:
                 sheet = conectar_gsheets()
                 if sheet:
-                    try:
-                        # Verifica se usuário já existe
-                        records = sheet.get_all_records()
-                        existing_users = [str(r['username']) for r in records]
-                        
-                        if username in existing_users:
-                            st.warning("Usuário já existe.")
-                        else:
-                            # Adiciona nova linha: username, password (hash), name
-                            sheet.append_row([username, hash_senha(password), username])
-                            st.success("Conta criada! Clique em 'Entrar'.")
-                    except Exception as e:
-                        st.error(f"Erro ao criar conta: {e}")
-            else:
-                st.warning("Preencha usuário e senha.")
+                    records = sheet.get_all_records()
+                    users = [str(r['username']) for r in records]
+                    if username in users:
+                        st.warning("Usuário já existe.")
+                    else:
+                        # Adiciona usuario com config vazia na col 4
+                        sheet.append_row([username, hash_senha(password), username, "{}"])
+                        st.success("Criado! Faça login.")
+            else: st.warning("Preencha tudo.")
 
-# Se não estiver logado, para a execução e mostra login
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
-
+if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 if not st.session_state['logged_in']:
     login_page()
-    st.stop() # Interrompe o script aqui se não estiver logado
+    st.stop()
 
 # ==========================================
-# 2. APLICAÇÃO PRINCIPAL (SÓ RODA SE LOGADO)
+# 2. APLICAÇÃO PRINCIPAL
 # ==========================================
 
-# Sidebar com Logout
-st.sidebar.markdown(f"Bem-vindo, **{st.session_state.get('user_name', '')}**")
+# Sidebar Header
+st.sidebar.write(f"Olá, **{st.session_state['user_name']}** 👋")
 if st.sidebar.button("Sair"):
     st.session_state['logged_in'] = False
     st.rerun()
@@ -138,226 +148,173 @@ if st.sidebar.button("Sair"):
 st.title("Análise de Exercícios com Visão Computacional")
 
 # ==========================================
-# 3. CONSTANTES DE MOVIMENTO
+# 3. CONSTANTES (FÍSICA)
 # ==========================================
 MOVEMENT_CONSTANTS = {
-    "Agachamento Búlgaro": {
-        "state_variable": "knee_angle",
-        "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"}
-    },
-    "Agachamento Padrão": {
-        "state_variable": "femur_angle",
-        "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"}
-    },
-    "Supino Máquina": {
-        "state_variable": "elbow_angle",
-        "stages": {"UP": "BRACO ESTICADO", "DOWN": "NA BASE", "TRANSITION": "EMPURRANDO"}
-    },
-    "Flexão de Braço": {
-        "state_variable": "elbow_angle",
-        "stages": {"UP": "EM CIMA (OK)", "DOWN": "EMBAIXO (OK)", "TRANSITION": "MOVIMENTO"}
-    },
-    "Rosca Direta": {
-        "state_variable": "elbow_angle",
-        "stages": {"UP": "ESTICADO", "DOWN": "CONTRAIDO", "TRANSITION": "EM ACAO"}
-    },
-    "Desenvolvimento (Ombro)": {
-        "state_variable": "elbow_angle",
-        "stages": {"UP": "TOPO (LOCKOUT)", "DOWN": "BASE", "TRANSITION": "MOVIMENTO"}
-    },
-    "Afundo (Lunge)": {
-        "state_variable": "knee_angle",
-        "stages": {"UP": "DESCENDO", "DOWN": "BOM AFUNDO", "TRANSITION": "DESCENDO"} 
-    },
-    "Levantamento Terra": {
-        "state_variable": "hip_angle",
-        "stages": {"UP": "TOPO (ERETO)", "DOWN": "POSICAO INICIAL", "TRANSITION": "LEVANTANDO"}
-    },
-    "Prancha (Plank)": {
-        "state_variable": "body_angle",
-        "stages": {"UP": "QUADRIL ALTO", "DOWN": "QUADRIL CAINDO", "TRANSITION": "PERFEITO"}
-    },
-    "Abdominal (Crunch)": {
-        "state_variable": "crunch_angle",
-        "stages": {"UP": "DEITADO", "DOWN": "CONTRAIDO", "TRANSITION": "MOVIMENTO"}
-    },
-    "Elevação Lateral": {
-        "state_variable": "shoulder_abd_angle",
-        "stages": {"UP": "ALTURA CORRETA", "DOWN": "DESCANSO", "TRANSITION": "SUBINDO"}
-    }
+    "Agachamento Búlgaro": { "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"} },
+    "Agachamento Padrão": { "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"} },
+    "Supino Máquina": { "stages": {"UP": "BRACO ESTICADO", "DOWN": "NA BASE", "TRANSITION": "EMPURRANDO"} },
+    "Flexão de Braço": { "stages": {"UP": "EM CIMA (OK)", "DOWN": "EMBAIXO (OK)", "TRANSITION": "MOVIMENTO"} },
+    "Rosca Direta": { "stages": {"UP": "ESTICADO", "DOWN": "CONTRAIDO", "TRANSITION": "EM ACAO"} },
+    "Desenvolvimento (Ombro)": { "stages": {"UP": "TOPO (LOCKOUT)", "DOWN": "BASE", "TRANSITION": "MOVIMENTO"} },
+    "Afundo (Lunge)": { "stages": {"UP": "DESCENDO", "DOWN": "BOM AFUNDO", "TRANSITION": "DESCENDO"} },
+    "Levantamento Terra": { "stages": {"UP": "TOPO (ERETO)", "DOWN": "POSICAO INICIAL", "TRANSITION": "LEVANTANDO"} },
+    "Prancha (Plank)": { "stages": {"UP": "QUADRIL ALTO", "DOWN": "QUADRIL CAINDO", "TRANSITION": "PERFEITO"} },
+    "Abdominal (Crunch)": { "stages": {"UP": "DEITADO", "DOWN": "CONTRAIDO", "TRANSITION": "MOVIMENTO"} },
+    "Elevação Lateral": { "stages": {"UP": "ALTURA CORRETA", "DOWN": "DESCANSO", "TRANSITION": "SUBINDO"} }
 }
 
 # ==========================================
-# 4. Funções Matemáticas
+# 4. FUNÇÕES MATEMÁTICAS E VISUALIZAÇÃO
 # ==========================================
-
 def calculate_angle(a, b, c):
-    """Calcula o ângulo entre três pontos (a, b, c). b é o vértice."""
     a, b, c = np.array(a), np.array(b), np.array(c)
     radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
     angle = np.abs(radians * 180.0 / np.pi)
-    if angle > 180.0:
-        angle = 360 - angle
+    if angle > 180.0: angle = 360 - angle
     return angle
 
 def draw_pose_landmarks(frame, landmarks, w, h):
-    connections = [
-        (11, 13), (13, 15), (12, 14), (14, 16), (11, 12),
-        (11, 23), (12, 24), (23, 24), (23, 25), (25, 27), (24, 26), (26, 28)
-    ]
+    connections = [(11,13),(13,15),(12,14),(14,16),(11,12),(11,23),(12,24),(23,24),(23,25),(25,27),(24,26),(26,28)]
     for s, e in connections:
-        x1, y1 = int(landmarks[s].x * w), int(landmarks[s].y * h)
-        x2, y2 = int(landmarks[e].x * w), int(landmarks[e].y * h)
-        cv2.line(frame, (x1, y1), (x2, y2), (200, 200, 200), 2)
+        cv2.line(frame, (int(landmarks[s].x*w), int(landmarks[s].y*h)), (int(landmarks[e].x*w), int(landmarks[e].y*h)), (200,200,200), 2)
     for lm in landmarks:
-        x, y = int(lm.x * w), int(lm.y * h)
-        cv2.circle(frame, (x, y), 4, (0, 0, 255), -1)
+        cv2.circle(frame, (int(lm.x*w), int(lm.y*h)), 4, (0,0,255), -1)
 
-def draw_visual_angle(frame, p1, p2, p3, angle_text, color=(255, 255, 255), label=""):
-    p1 = (int(p1[0]), int(p1[1]))
-    p2 = (int(p2[0]), int(p2[1]))
-    p3 = (int(p3[0]), int(p3[1]))
-    cv2.line(frame, p1, p2, (255, 255, 255), 2)
-    cv2.line(frame, p2, p3, (255, 255, 255), 2)
-    cv2.circle(frame, p2, 6, color, -1)
-    
-    display_text = f"{label}: {angle_text}" if label else angle_text
-    cv2.putText(frame, display_text, (p2[0] + 15, p2[1]), 
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
-
-# --- CSS da Animação ---
-st.markdown("""
-    <style>
-        @keyframes pulse-red {
-            0% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0.7); }
-            70% { box-shadow: 0 0 0 10px rgba(255, 75, 75, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(255, 75, 75, 0); }
-        }
-        [data-testid="stSidebarCollapsedControl"] {
-            animation: pulse-red 2s infinite;
-            background-color: #FF4B4B;
-            color: white;
-            border-radius: 50%;
-        }
-    </style>
-""", unsafe_allow_html=True)
+def draw_visual_angle(frame, p1, p2, p3, text, color=(255,255,255), label=""):
+    cv2.line(frame, (int(p1[0]),int(p1[1])), (int(p2[0]),int(p2[1])), (255,255,255), 2)
+    cv2.line(frame, (int(p2[0]),int(p2[1])), (int(p3[0]),int(p3[1])), (255,255,255), 2)
+    cv2.circle(frame, (int(p2[0]),int(p2[1])), 6, color, -1)
+    display = f"{label}: {text}" if label else text
+    cv2.putText(frame, display, (int(p2[0])+15, int(p2[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
 
 # ==========================================
-# 5. Sidebar e Configuração
+# 5. SIDEBAR COM LÓGICA DE SALVAR/CARREGAR
 # ==========================================
 
-st.sidebar.header("1. Seleção do Exercício")
-
+st.sidebar.header("1. Exercício & Configs")
 EXERCISE_OPTIONS = list(MOVEMENT_CONSTANTS.keys())
-exercise_type = st.sidebar.selectbox("Qual exercício analisar?", EXERCISE_OPTIONS)
+exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS)
 
-user_thresholds = {}
+# --- BOTÕES DE GERENCIAMENTO DE CONFIG ---
+col_save, col_load = st.sidebar.columns(2)
+
+# Inicializa o dicionário de configs na sessão se não existir
+if 'user_configs' not in st.session_state:
+    st.session_state['user_configs'] = {}
+
+# Variável auxiliar para pegar valores salvos (ou padrão)
+def get_val(key, default):
+    # Retorna o valor salvo se existir para este exercício e chave, senão retorna o default
+    full_key = f"{exercise_type}_{key}"
+    return st.session_state['user_configs'].get(full_key, default)
+
+user_thresholds = {} # Dicionário que será usado no loop do vídeo
 
 st.sidebar.markdown("---")
 
+# --- FUNÇÕES DE RENDERIZAÇÃO ---
 def render_movement_header():
-    st.sidebar.markdown("### 📏 2. Regras de Movimento (Estado)")
-    st.sidebar.caption("Parâmetros físicos que definem o exercício.")
-
+    st.sidebar.markdown("### 📏 Estado do Movimento")
 def render_safety_header():
-    st.sidebar.markdown("### 🛡️ 3. Regras do Usuário (Segurança)")
-    st.sidebar.caption("Alertas de correção e preferências.")
+    st.sidebar.markdown("### 🛡️ Segurança")
 
-# --- LÓGICA DE REGRAS ---
+# --- WIDGETS DINÂMICOS (Popula user_thresholds) ---
+
 if exercise_type == "Agachamento Búlgaro":
     render_movement_header()
-    user_thresholds['knee_min'] = st.sidebar.number_input("Ângulo Mín (Baixo)", 75)
-    user_thresholds['knee_max'] = st.sidebar.number_input("Ângulo Máx (Alto)", 160)
-    st.sidebar.markdown("---")
+    user_thresholds['knee_min'] = st.sidebar.number_input("Ângulo Baixo", value=get_val('knee_min', 75))
+    user_thresholds['knee_max'] = st.sidebar.number_input("Ângulo Alto", value=get_val('knee_max', 160))
     render_safety_header()
-    check_torso = st.sidebar.checkbox("Alerta: Tronco Inclinado", value=True)
-    user_thresholds['torso_limit'] = st.sidebar.slider("Limite Inclinação Tronco", 50, 90, 70) if check_torso else None
+    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True))
+    user_thresholds['check_torso'] = check # Salva estado do checkbox
+    if check:
+        user_thresholds['torso_limit'] = st.sidebar.slider("Limite Tronco", 50, 90, value=get_val('torso_limit', 70))
 
 elif exercise_type == "Agachamento Padrão":
     render_movement_header()
-    user_thresholds['stand_max'] = st.sidebar.slider("Limite 'Em Pé' (Coxa)", 0, 40, 32)
-    user_thresholds['pass_min'] = st.sidebar.slider("Limite 'Agachamento OK'", 70, 110, 80)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['stand_max'] = st.sidebar.slider("Limite Em Pé", 0, 40, value=get_val('stand_max', 32))
+    user_thresholds['pass_min'] = st.sidebar.slider("Limite Agachado", 70, 110, value=get_val('pass_min', 80))
 
 elif exercise_type == "Supino Máquina":
     render_movement_header()
-    user_thresholds['extended_min'] = st.sidebar.slider("Braço Esticado (Min)", 140, 180, 160)
-    user_thresholds['flexed_max'] = st.sidebar.slider("Braço na Base (Max)", 40, 100, 80)
-    st.sidebar.markdown("---")
+    user_thresholds['extended_min'] = st.sidebar.slider("Braço Esticado", 140, 180, value=get_val('extended_min', 160))
+    user_thresholds['flexed_max'] = st.sidebar.slider("Braço Base", 40, 100, value=get_val('flexed_max', 80))
     render_safety_header()
-    check_safety = st.sidebar.checkbox("Alerta: Cotovelos Abertos", value=True)
-    user_thresholds['safety_limit'] = st.sidebar.slider("Limite Abertura Cotovelo", 60, 90, 80) if check_safety else None
+    check = st.sidebar.checkbox("Alerta Cotovelo", value=get_val('check_safety', True))
+    user_thresholds['check_safety'] = check
+    if check:
+        user_thresholds['safety_limit'] = st.sidebar.slider("Limite Abertura", 60, 90, value=get_val('safety_limit', 80))
 
 elif exercise_type == "Flexão de Braço":
     render_movement_header()
-    user_thresholds['pu_down'] = st.sidebar.slider("Ângulo Baixo (Descida)", 60, 100, 90)
-    user_thresholds['pu_up'] = st.sidebar.slider("Ângulo Alto (Subida)", 150, 180, 165)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['pu_down'] = st.sidebar.slider("Ângulo Baixo", 60, 100, value=get_val('pu_down', 90))
+    user_thresholds['pu_up'] = st.sidebar.slider("Ângulo Alto", 150, 180, value=get_val('pu_up', 165))
 
 elif exercise_type == "Rosca Direta":
     render_movement_header()
-    user_thresholds['bc_flex'] = st.sidebar.slider("Contração Máxima", 30, 60, 45)
-    user_thresholds['bc_ext'] = st.sidebar.slider("Extensão Completa", 140, 180, 160)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['bc_flex'] = st.sidebar.slider("Contração Máx", 30, 60, value=get_val('bc_flex', 45))
+    user_thresholds['bc_ext'] = st.sidebar.slider("Extensão Total", 140, 180, value=get_val('bc_ext', 160))
 
 elif exercise_type == "Desenvolvimento (Ombro)":
     render_movement_header()
-    user_thresholds['sp_up'] = st.sidebar.slider("Braço Esticado (Lockout)", 150, 180, 165)
-    user_thresholds['sp_down'] = st.sidebar.slider("Cotovelo na Base", 60, 100, 80)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['sp_up'] = st.sidebar.slider("Lockout", 150, 180, value=get_val('sp_up', 165))
+    user_thresholds['sp_down'] = st.sidebar.slider("Base", 60, 100, value=get_val('sp_down', 80))
 
 elif exercise_type == "Afundo (Lunge)":
     render_movement_header()
-    user_thresholds['lg_knee'] = st.sidebar.slider("Profundidade Joelho", 70, 110, 90)
-    st.sidebar.markdown("---")
+    user_thresholds['lg_knee'] = st.sidebar.slider("Profundidade", 70, 110, value=get_val('lg_knee', 90))
     render_safety_header()
-    check_torso = st.sidebar.checkbox("Alerta: Postura Tronco", value=True)
-    user_thresholds['lg_torso'] = st.sidebar.slider("Inclinação Tronco Mínima", 70, 90, 80) if check_torso else None
+    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True))
+    user_thresholds['check_torso'] = check
+    if check:
+        user_thresholds['lg_torso'] = st.sidebar.slider("Inclinação Mínima", 70, 90, value=get_val('lg_torso', 80))
 
 elif exercise_type == "Levantamento Terra":
     render_movement_header()
-    user_thresholds['dl_hip'] = st.sidebar.slider("Extensão Final (Quadril)", 160, 180, 170)
-    user_thresholds['dl_back'] = st.sidebar.slider("Limite Flexão (Costas)", 40, 90, 60)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.caption("Regra de Costas atua como Estado e Segurança.")
+    user_thresholds['dl_hip'] = st.sidebar.slider("Extensão Final", 160, 180, value=get_val('dl_hip', 170))
+    user_thresholds['dl_back'] = st.sidebar.slider("Limite Costas", 40, 90, value=get_val('dl_back', 60))
 
 elif exercise_type == "Prancha (Plank)":
     render_movement_header()
-    user_thresholds['pk_min'] = st.sidebar.slider("Mínimo (Cair Quadril)", 150, 175, 165)
-    user_thresholds['pk_max'] = st.sidebar.slider("Máximo (Empinar)", 175, 190, 185)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Limites de movimento atuam como segurança.")
+    user_thresholds['pk_min'] = st.sidebar.slider("Mínimo (Cair)", 150, 175, value=get_val('pk_min', 165))
+    user_thresholds['pk_max'] = st.sidebar.slider("Máximo (Empinar)", 175, 190, value=get_val('pk_max', 185))
 
 elif exercise_type == "Abdominal (Crunch)":
     render_movement_header()
-    user_thresholds['cr_flex'] = st.sidebar.slider("Contração Máxima", 40, 100, 70)
-    user_thresholds['cr_ext'] = st.sidebar.slider("Retorno (Deitado)", 110, 150, 130)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['cr_flex'] = st.sidebar.slider("Contração", 40, 100, value=get_val('cr_flex', 70))
+    user_thresholds['cr_ext'] = st.sidebar.slider("Retorno", 110, 150, value=get_val('cr_ext', 130))
 
 elif exercise_type == "Elevação Lateral":
     render_movement_header()
-    user_thresholds['lr_height'] = st.sidebar.slider("Ângulo Topo (Ombro)", 70, 100, 85)
-    user_thresholds['lr_low'] = st.sidebar.slider("Ângulo Baixo (Descanso)", 10, 30, 20)
-    st.sidebar.markdown("---")
-    render_safety_header()
-    st.sidebar.info("Nenhuma regra de segurança extra.")
+    user_thresholds['lr_height'] = st.sidebar.slider("Topo (Ombro)", 70, 100, value=get_val('lr_height', 85))
+    user_thresholds['lr_low'] = st.sidebar.slider("Baixo (Descanso)", 10, 30, value=get_val('lr_low', 20))
+
+# --- LÓGICA DOS BOTÕES ---
+# Atualiza o dicionário global com os valores atuais da tela antes de salvar
+if col_save.button("💾 Salvar Minhas Configs"):
+    # Atualiza o dicionário da sessão com os valores atuais dos widgets
+    # Prefixo com o nome do exercício para não misturar
+    for key, value in user_thresholds.items():
+        st.session_state['user_configs'][f"{exercise_type}_{key}"] = value
+    
+    # Envia para o Google Sheets
+    salvar_config_usuario(st.session_state['username'], st.session_state['user_configs'])
+
+if col_load.button("📂 Recarregar Nuvem"):
+    # Busca do Sheets e atualiza a sessão
+    configs_nuvem = carregar_config_usuario(st.session_state['username'])
+    if configs_nuvem:
+        st.session_state['user_configs'] = configs_nuvem
+        st.success("Configurações recarregadas!")
+        time.sleep(0.5)
+        st.rerun() # Recarrega a página para atualizar os sliders
+    else:
+        st.warning("Nenhuma configuração encontrada.")
 
 # ==========================================
-# 6. Upload e Loop Principal
+# 6. UPLOAD E PROCESSAMENTO
 # ==========================================
-
 st.sidebar.markdown("---")
 uploaded_file = st.sidebar.file_uploader("3. Carregar Vídeo", type=["mp4", "mov", "avi", "webm"])
 
@@ -372,19 +329,16 @@ if uploaded_file:
     video_path = tfile.name
 else:
     default = os.path.join(BASE_DIR, "gravando4.mp4")
-    if os.path.exists(default):
-        video_path = default
+    if os.path.exists(default): video_path = default
 
-if "last_state" not in st.session_state:
-    st.session_state.last_state = "INICIO"
+if "last_state" not in st.session_state: st.session_state.last_state = "INICIO"
 
 run_btn = st.sidebar.button("⚙️ PROCESSAR VÍDEO")
 
 if run_btn and video_path:
     if not os.path.exists(MODEL_PATH):
-        st.error(f"⚠️ Erro: Arquivo do modelo '{MODEL_PATH}' não encontrado.")
+        st.error(f"Modelo não encontrado: {MODEL_PATH}")
     else:
-        # Setup MediaPipe
         base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
         options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
         detector = vision.PoseLandmarker.create_from_options(options)
@@ -401,7 +355,6 @@ if run_btn and video_path:
 
         progress = st.progress(0)
         status = st.empty()
-        
         timestamp_ms = 0
         frames_total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         frame_idx = 0
@@ -413,12 +366,10 @@ if run_btn and video_path:
 
             frame = cv2.resize(frame, (target_width, target_height))
             h, w, _ = frame.shape
-            
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
             result = detector.detect_for_video(mp_image, int(timestamp_ms))
             timestamp_ms += (1000.0 / fps)
 
-            # --- Variáveis de Desenho ---
             current_state = st.session_state.last_state
             main_angle_display = 0
             alert_msg = ""
@@ -428,133 +379,109 @@ if run_btn and video_path:
             if result.pose_landmarks:
                 lm = result.pose_landmarks[0]
                 draw_pose_landmarks(frame, lm, w, h)
-
                 def get_pt(idx): return [lm[idx].x * w, lm[idx].y * h]
                 sh_l, hip_l, knee_l, ank_l = get_pt(11), get_pt(23), get_pt(25), get_pt(27)
                 elb_l, wr_l = get_pt(13), get_pt(15)
 
-                # --- Lógica Unificada ---
+                # --- LÓGICA DO PROCESSAMENTO ---
                 if exercise_type == "Agachamento Búlgaro":
                     if lm[27].y > lm[28].y: s_idx, h_idx, k_idx, a_idx = 11, 23, 25, 27
                     else: s_idx, h_idx, k_idx, a_idx = 12, 24, 26, 28
                     p_sh, p_hip, p_knee, p_ank = get_pt(s_idx), get_pt(h_idx), get_pt(k_idx), get_pt(a_idx)
                     knee_angle = calculate_angle(p_hip, p_knee, p_ank)
-                    main_angle_display = knee_angle
-                    vis_p1, vis_p2, vis_p3 = p_hip, p_knee, p_ank
-                    label_angle = "Joelho"
+                    main_angle_display = knee_angle; vis_p1,vis_p2,vis_p3 = p_hip,p_knee,p_ank; label_angle = "Joelho"
+                    
                     if knee_angle > user_thresholds['knee_max']: current_state = CONSTANTS['stages']['UP']
                     elif user_thresholds['knee_min'] <= knee_angle <= user_thresholds['knee_max']: current_state = CONSTANTS['stages']['TRANSITION']
                     elif knee_angle < user_thresholds['knee_min']: current_state = CONSTANTS['stages']['DOWN']
-                    if user_thresholds.get('torso_limit'):
+                    
+                    if user_thresholds.get('check_torso'):
                         torso_angle = calculate_angle(p_sh, p_hip, p_knee)
-                        if torso_angle < user_thresholds['torso_limit']:
-                            alert_msg = "TRONCO INCLINADO"
-                            cv2.line(frame, (int(p_sh[0]), int(p_sh[1])), (int(p_hip[0]), int(p_hip[1])), (0,0,255), 3)
+                        if torso_angle < user_thresholds.get('torso_limit', 70): alert_msg = "TRONCO INCLINADO"
 
                 elif exercise_type == "Agachamento Padrão":
                     vertical_ref = [knee_l[0], knee_l[1] - 100]
                     femur_angle = calculate_angle(hip_l, knee_l, vertical_ref)
-                    main_angle_display = femur_angle
-                    vis_p1, vis_p2, vis_p3 = hip_l, knee_l, vertical_ref
-                    label_angle = "Coxa"
+                    main_angle_display = femur_angle; vis_p1,vis_p2,vis_p3 = hip_l,knee_l,vertical_ref; label_angle = "Coxa"
                     if femur_angle <= user_thresholds['stand_max']: current_state = CONSTANTS['stages']['UP']
                     elif user_thresholds['stand_max'] < femur_angle < user_thresholds['pass_min']: current_state = CONSTANTS['stages']['TRANSITION']
                     elif femur_angle >= user_thresholds['pass_min']: current_state = CONSTANTS['stages']['DOWN']
 
                 elif exercise_type == "Supino Máquina":
                     elbow_angle = calculate_angle(sh_l, elb_l, wr_l)
-                    main_angle_display = elbow_angle
-                    vis_p1, vis_p2, vis_p3 = sh_l, elb_l, wr_l
-                    label_angle = "Cotovelo"
+                    main_angle_display = elbow_angle; vis_p1,vis_p2,vis_p3 = sh_l,elb_l,wr_l; label_angle = "Cotovelo"
                     if elbow_angle >= user_thresholds['extended_min']: current_state = CONSTANTS['stages']['UP']
                     elif elbow_angle <= user_thresholds['flexed_max']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
-                    if user_thresholds.get('safety_limit'):
+                    if user_thresholds.get('check_safety'):
                         abduction_angle = calculate_angle(hip_l, sh_l, elb_l)
-                        if abduction_angle > user_thresholds['safety_limit']:
-                            alert_msg = "COTOVELOS ABERTOS!"
-                            cv2.line(frame, (int(sh_l[0]), int(sh_l[1])), (int(elb_l[0]), int(elb_l[1])), (0, 0, 255), 3)
+                        if abduction_angle > user_thresholds.get('safety_limit', 80): alert_msg = "COTOVELOS ABERTOS!"
 
                 elif exercise_type == "Flexão de Braço":
                     angle_elb = calculate_angle(sh_l, elb_l, wr_l)
-                    main_angle_display = angle_elb
-                    vis_p1, vis_p2, vis_p3 = sh_l, elb_l, wr_l
-                    label_angle = "Cotovelo"
+                    main_angle_display = angle_elb; vis_p1,vis_p2,vis_p3 = sh_l,elb_l,wr_l; label_angle = "Cotovelo"
                     if angle_elb < user_thresholds['pu_down']: current_state = CONSTANTS['stages']['DOWN']
                     elif angle_elb > user_thresholds['pu_up']: current_state = CONSTANTS['stages']['UP']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
                 elif exercise_type == "Rosca Direta":
                     angle_elb = calculate_angle(sh_l, elb_l, wr_l)
-                    main_angle_display = angle_elb
-                    vis_p1, vis_p2, vis_p3 = sh_l, elb_l, wr_l
-                    label_angle = "Biceps"
+                    main_angle_display = angle_elb; vis_p1,vis_p2,vis_p3 = sh_l,elb_l,wr_l; label_angle = "Biceps"
                     if angle_elb < user_thresholds['bc_flex']: current_state = CONSTANTS['stages']['DOWN']
                     elif angle_elb > user_thresholds['bc_ext']: current_state = CONSTANTS['stages']['UP']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
                 elif exercise_type == "Desenvolvimento (Ombro)":
                     angle_elb = calculate_angle(sh_l, elb_l, wr_l)
-                    main_angle_display = angle_elb
-                    vis_p1, vis_p2, vis_p3 = sh_l, elb_l, wr_l
+                    main_angle_display = angle_elb; vis_p1,vis_p2,vis_p3 = sh_l,elb_l,wr_l
                     if angle_elb > user_thresholds['sp_up']: current_state = CONSTANTS['stages']['UP']
                     elif angle_elb < user_thresholds['sp_down']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
                 elif exercise_type == "Afundo (Lunge)":
                     angle_knee = calculate_angle(hip_l, knee_l, ank_l)
-                    main_angle_display = angle_knee
-                    vis_p1, vis_p2, vis_p3 = hip_l, knee_l, ank_l
-                    label_angle = "Joelho"
+                    main_angle_display = angle_knee; vis_p1,vis_p2,vis_p3 = hip_l,knee_l,ank_l; label_angle = "Joelho"
                     if angle_knee <= user_thresholds['lg_knee']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['UP']
-                    if user_thresholds.get('lg_torso'):
+                    if user_thresholds.get('check_torso'):
                         angle_torso = calculate_angle(sh_l, hip_l, knee_l)
-                        if angle_torso < user_thresholds['lg_torso']: alert_msg = "POSTURA RUIM"
+                        if angle_torso < user_thresholds.get('lg_torso', 80): alert_msg = "POSTURA RUIM"
 
                 elif exercise_type == "Levantamento Terra":
                     angle_hip = calculate_angle(sh_l, hip_l, knee_l)
-                    main_angle_display = angle_hip
-                    vis_p1, vis_p2, vis_p3 = sh_l, hip_l, knee_l
-                    label_angle = "Quadril"
+                    main_angle_display = angle_hip; vis_p1,vis_p2,vis_p3 = sh_l,hip_l,knee_l; label_angle = "Quadril"
                     if angle_hip > user_thresholds['dl_hip']: current_state = CONSTANTS['stages']['UP']
                     elif angle_hip < user_thresholds['dl_back']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
                 elif exercise_type == "Prancha (Plank)":
                     angle_body = calculate_angle(sh_l, hip_l, ank_l)
-                    main_angle_display = angle_body
-                    vis_p1, vis_p2, vis_p3 = sh_l, hip_l, ank_l
-                    label_angle = "Alinhamento"
+                    main_angle_display = angle_body; vis_p1,vis_p2,vis_p3 = sh_l,hip_l,ank_l; label_angle = "Corpo"
                     if user_thresholds['pk_min'] <= angle_body <= user_thresholds['pk_max']: current_state = CONSTANTS['stages']['TRANSITION']
                     elif angle_body < user_thresholds['pk_min']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['UP']
 
                 elif exercise_type == "Abdominal (Crunch)":
                     angle_crunch = calculate_angle(sh_l, hip_l, knee_l)
-                    main_angle_display = angle_crunch
-                    vis_p1, vis_p2, vis_p3 = sh_l, hip_l, knee_l
+                    main_angle_display = angle_crunch; vis_p1,vis_p2,vis_p3 = sh_l,hip_l,knee_l
                     if angle_crunch < user_thresholds['cr_flex']: current_state = CONSTANTS['stages']['DOWN']
                     elif angle_crunch > user_thresholds['cr_ext']: current_state = CONSTANTS['stages']['UP']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
                 elif exercise_type == "Elevação Lateral":
                     angle_abd = calculate_angle(hip_l, sh_l, elb_l)
-                    main_angle_display = angle_abd
-                    vis_p1, vis_p2, vis_p3 = hip_l, sh_l, elb_l
-                    label_angle = "Ombro"
+                    main_angle_display = angle_abd; vis_p1,vis_p2,vis_p3 = hip_l,sh_l,elb_l; label_angle = "Ombro"
                     if angle_abd >= user_thresholds['lr_height']: current_state = CONSTANTS['stages']['UP']
                     elif angle_abd < user_thresholds['lr_low']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
-                # --- Atualização da UI ---
+                # --- ATUALIZAÇÃO DA UI ---
                 st.session_state.last_state = current_state
-                s_color = (255, 255, 255)
-                if current_state == CONSTANTS['stages']['DOWN'] or current_state == CONSTANTS['stages']['UP']: s_color = (0, 255, 0)
-                else: s_color = (0, 255, 255)
+                s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
                 if alert_msg: s_color = (0, 0, 255)
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
+                
                 box_h = 85 if alert_msg else 60
                 cv2.rectangle(frame, (0, 0), (w, box_h), (20, 20, 20), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, s_color, 2)
@@ -568,6 +495,5 @@ if run_btn and video_path:
         cap.release()
         out.release()
         detector.close()
-        status.success("Análise Concluída!")
+        status.success("Análise Finalizada!")
         st.video(OUTPUT_PATH, format="video/webm")
-
