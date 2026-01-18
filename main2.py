@@ -8,7 +8,7 @@ import hashlib
 import json 
 import datetime
 
-# --- BIBLIOTECA DE COOKIES (NOVO) ---
+# --- BIBLIOTECA DE COOKIES ---
 import extra_streamlit_components as stx
 
 # --- GOOGLE SHEETS ---
@@ -29,7 +29,7 @@ st.set_page_config(
 )
 
 # ==========================================
-# 1. GERENCIADOR DE COOKIES (PERSISTÊNCIA)
+# 1. GERENCIADOR DE COOKIES
 # ==========================================
 def get_manager():
     return stx.CookieManager()
@@ -81,23 +81,19 @@ def carregar_config_usuario(username):
                 if config_json and len(config_json) > 2:
                     return json.loads(config_json)
         except Exception as e:
-            # Silencia erros de carregamento na inicialização rápida
             pass 
     return {}
 
 # --- LÓGICA DE LOGIN COM COOKIE ---
 
-# Verifica se o cookie existe para logar automaticamente
 cookie_user = cookie_manager.get(cookie="user_treino_ai")
 
 if 'logged_in' not in st.session_state:
-    # Se achou cookie, loga automaticamente
     if cookie_user:
         st.session_state['logged_in'] = True
         st.session_state['username'] = cookie_user
-        st.session_state['user_name'] = cookie_user # Usa o ID como nome temporário até carregar
+        st.session_state['user_name'] = cookie_user 
         
-        # Carrega configs silenciosamente
         saved_configs = carregar_config_usuario(cookie_user)
         st.session_state['user_configs'] = saved_configs if saved_configs else {}
     else:
@@ -125,16 +121,13 @@ def login_page():
                     for user in records:
                         if str(user['username']) == username and str(user['password']) == hash_senha(password):
                             
-                            # 1. Configura Sessão
                             st.session_state['logged_in'] = True
                             st.session_state['user_name'] = user.get('name', username)
                             st.session_state['username'] = username
                             
-                            # 2. Carrega Configs
                             saved_configs = carregar_config_usuario(username)
                             st.session_state['user_configs'] = saved_configs if saved_configs else {}
                             
-                            # 3. GRAVA O COOKIE (Validade 30 dias)
                             cookie_manager.set("user_treino_ai", username, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
                                 
                             st.success("Logado!")
@@ -158,7 +151,6 @@ def login_page():
                         st.success("Criado! Faça login.")
             else: st.warning("Preencha tudo.")
 
-# Se não estiver logado, exibe login e para
 if not st.session_state['logged_in']:
     login_page()
     st.stop()
@@ -170,10 +162,8 @@ if not st.session_state['logged_in']:
 st.sidebar.write(f"Olá, **{st.session_state.get('username', 'Atleta')}** 👋")
 
 if st.sidebar.button("Sair"):
-    # Limpa sessão
     st.session_state['logged_in'] = False
     st.session_state['user_configs'] = {}
-    # Deleta cookie
     cookie_manager.delete("user_treino_ai")
     st.rerun()
 
@@ -228,8 +218,9 @@ st.sidebar.header("1. Exercício & Configs")
 EXERCISE_OPTIONS = list(MOVEMENT_CONSTANTS.keys())
 exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS)
 
-# --- BOTÕES DE GERENCIAMENTO DE CONFIG ---
-col_save, col_load = st.sidebar.columns(2)
+# Inicializa o dicionário de configs na sessão se não existir
+if 'user_configs' not in st.session_state:
+    st.session_state['user_configs'] = {}
 
 # Função auxiliar para pegar valores salvos (ou padrão)
 def get_val(key, default):
@@ -316,24 +307,12 @@ elif exercise_type == "Elevação Lateral":
     user_thresholds['lr_height'] = st.sidebar.slider("Topo (Ombro)", 70, 100, value=get_val('lr_height', 85), key=f"{exercise_type}_lr_height")
     user_thresholds['lr_low'] = st.sidebar.slider("Baixo (Descanso)", 10, 30, value=get_val('lr_low', 20), key=f"{exercise_type}_lr_low")
 
-# --- LÓGICA DOS BOTÕES ---
-if col_save.button("💾 Salvar Minhas Configs"):
+# --- LÓGICA DE SALVAR ---
+st.sidebar.markdown("---")
+if st.sidebar.button("💾 Salvar Minhas Configs", type="primary", use_container_width=True):
     for key, value in user_thresholds.items():
         st.session_state['user_configs'][f"{exercise_type}_{key}"] = value
     salvar_config_usuario(st.session_state['username'], st.session_state['user_configs'])
-
-if col_load.button("📂 Recarregar Nuvem"):
-    configs_nuvem = carregar_config_usuario(st.session_state['username'])
-    if configs_nuvem:
-        st.session_state['user_configs'] = configs_nuvem
-        keys_to_clear = [k for k in st.session_state.keys() if k.startswith(exercise_type)]
-        for k in keys_to_clear:
-            del st.session_state[k]
-        st.success("Configurações restauradas!")
-        time.sleep(0.5)
-        st.rerun()
-    else:
-        st.warning("Nenhuma configuração encontrada na nuvem.")
 
 # ==========================================
 # 7. UPLOAD E PROCESSAMENTO
@@ -498,7 +477,6 @@ if run_btn and video_path:
                     elif angle_abd < user_thresholds['lr_low']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
-                # --- ATUALIZAÇÃO DA UI ---
                 st.session_state.last_state = current_state
                 s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
                 if alert_msg: s_color = (0, 0, 255)
