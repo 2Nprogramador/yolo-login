@@ -302,15 +302,24 @@ if col_save.button("💾 Salvar Minhas Configs"):
     salvar_config_usuario(st.session_state['username'], st.session_state['user_configs'])
 
 if col_load.button("📂 Recarregar Nuvem"):
-    # Busca do Sheets e atualiza a sessão
+    # 1. Busca do Sheets
     configs_nuvem = carregar_config_usuario(st.session_state['username'])
+    
     if configs_nuvem:
+        # 2. Atualiza a memória de configs
         st.session_state['user_configs'] = configs_nuvem
-        st.success("Configurações recarregadas!")
+        
+        # 3. TRUQUE: Limpa o estado dos widgets específicos deste exercício
+        # Isso força o Streamlit a esquecer o que o usuário mexeu e ler do 'value=' de novo
+        keys_to_clear = [k for k in st.session_state.keys() if k.startswith(exercise_type)]
+        for k in keys_to_clear:
+            del st.session_state[k]
+            
+        st.success("Configurações restauradas!")
         time.sleep(0.5)
-        st.rerun() # Recarrega a página para atualizar os sliders
+        st.rerun()
     else:
-        st.warning("Nenhuma configuração encontrada.")
+        st.warning("Nenhuma configuração encontrada na nuvem.")
 
 # ==========================================
 # 6. UPLOAD E PROCESSAMENTO
@@ -497,3 +506,4 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Finalizada!")
         st.video(OUTPUT_PATH, format="video/webm")
+
