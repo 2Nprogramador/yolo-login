@@ -5,7 +5,7 @@ import os
 import tempfile
 import time
 import hashlib
-import json # <--- IMPORTANTE PARA SALVAR DADOS
+import json 
 
 # --- GOOGLE SHEETS ---
 import gspread
@@ -50,16 +50,13 @@ def salvar_config_usuario(username, config_dict):
     sheet = conectar_gsheets()
     if sheet:
         try:
-            # Encontra a célula do usuário na coluna A (username)
             cell = sheet.find(username, in_column=1)
             if cell:
-                # Converte o dicionário para Texto JSON
                 config_json = json.dumps(config_dict)
-                # Atualiza a coluna 4 (Coluna D - 'config')
                 sheet.update_cell(cell.row, 4, config_json)
                 st.toast("✅ Configurações salvas na nuvem!", icon="☁️")
             else:
-                st.error("Usuário não encontrado na planilha.")
+                st.error("Usuário não encontrado.")
         except Exception as e:
             st.error(f"Erro ao salvar: {e}")
 
@@ -70,13 +67,12 @@ def carregar_config_usuario(username):
         try:
             cell = sheet.find(username, in_column=1)
             if cell:
-                # Pega o valor da coluna 4 (config)
                 config_json = sheet.cell(cell.row, 4).value
-                if config_json:
-                    return json.loads(config_json) # Converte Texto -> Dicionário
+                if config_json and config_json != "{}":
+                    return json.loads(config_json)
         except Exception as e:
             st.error(f"Erro ao carregar: {e}")
-    return {} # Retorna vazio se não achar
+    return {}
 
 # --- PÁGINA DE LOGIN ---
 
@@ -99,14 +95,10 @@ def login_page():
                         if str(user['username']) == username and str(user['password']) == hash_senha(password):
                             st.session_state['logged_in'] = True
                             st.session_state['user_name'] = user.get('name', username)
-                            st.session_state['username'] = username # Guarda o ID para salvar depois
+                            st.session_state['username'] = username
                             
-                            # Tenta carregar configs salvas automaticamente ao logar
                             saved_configs = carregar_config_usuario(username)
-                            if saved_configs:
-                                st.session_state['user_configs'] = saved_configs
-                            else:
-                                st.session_state['user_configs'] = {}
+                            st.session_state['user_configs'] = saved_configs if saved_configs else {}
                                 
                             st.success("Logado!")
                             time.sleep(1)
@@ -125,12 +117,19 @@ def login_page():
                     if username in users:
                         st.warning("Usuário já existe.")
                     else:
-                        # Adiciona usuario com config vazia na col 4
                         sheet.append_row([username, hash_senha(password), username, "{}"])
                         st.success("Criado! Faça login.")
             else: st.warning("Preencha tudo.")
 
+# --- VERIFICAÇÃO DE SESSÃO ROBUSTA ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
+if 'username' not in st.session_state: st.session_state['username'] = ""
+if 'user_configs' not in st.session_state: st.session_state['user_configs'] = {}
+
+if st.session_state['logged_in'] and not st.session_state['username']:
+    st.session_state['logged_in'] = False
+    st.rerun()
+
 if not st.session_state['logged_in']:
     login_page()
     st.stop()
@@ -139,7 +138,6 @@ if not st.session_state['logged_in']:
 # 2. APLICAÇÃO PRINCIPAL
 # ==========================================
 
-# Sidebar Header
 st.sidebar.write(f"Olá, **{st.session_state['user_name']}** 👋")
 if st.sidebar.button("Sair"):
     st.session_state['logged_in'] = False
@@ -199,102 +197,94 @@ exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS)
 # --- BOTÕES DE GERENCIAMENTO DE CONFIG ---
 col_save, col_load = st.sidebar.columns(2)
 
-# Inicializa o dicionário de configs na sessão se não existir
-if 'user_configs' not in st.session_state:
-    st.session_state['user_configs'] = {}
-
-# Variável auxiliar para pegar valores salvos (ou padrão)
+# Função auxiliar para pegar valores salvos (ou padrão)
 def get_val(key, default):
-    # Retorna o valor salvo se existir para este exercício e chave, senão retorna o default
     full_key = f"{exercise_type}_{key}"
     return st.session_state['user_configs'].get(full_key, default)
 
-user_thresholds = {} # Dicionário que será usado no loop do vídeo
+user_thresholds = {} 
 
 st.sidebar.markdown("---")
 
-# --- FUNÇÕES DE RENDERIZAÇÃO ---
 def render_movement_header():
     st.sidebar.markdown("### 📏 Estado do Movimento")
 def render_safety_header():
     st.sidebar.markdown("### 🛡️ Segurança")
 
-# --- WIDGETS DINÂMICOS (Popula user_thresholds) ---
+# --- WIDGETS DINÂMICOS (Com chaves 'key=' únicas para permitir reset) ---
 
 if exercise_type == "Agachamento Búlgaro":
     render_movement_header()
-    user_thresholds['knee_min'] = st.sidebar.number_input("Ângulo Baixo", value=get_val('knee_min', 75))
-    user_thresholds['knee_max'] = st.sidebar.number_input("Ângulo Alto", value=get_val('knee_max', 160))
+    user_thresholds['knee_min'] = st.sidebar.number_input("Ângulo Baixo", value=get_val('knee_min', 75), key=f"{exercise_type}_knee_min")
+    user_thresholds['knee_max'] = st.sidebar.number_input("Ângulo Alto", value=get_val('knee_max', 160), key=f"{exercise_type}_knee_max")
     render_safety_header()
-    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True))
-    user_thresholds['check_torso'] = check # Salva estado do checkbox
+    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True), key=f"{exercise_type}_check_torso")
+    user_thresholds['check_torso'] = check
     if check:
-        user_thresholds['torso_limit'] = st.sidebar.slider("Limite Tronco", 50, 90, value=get_val('torso_limit', 70))
+        user_thresholds['torso_limit'] = st.sidebar.slider("Limite Tronco", 50, 90, value=get_val('torso_limit', 70), key=f"{exercise_type}_torso_limit")
 
 elif exercise_type == "Agachamento Padrão":
     render_movement_header()
-    user_thresholds['stand_max'] = st.sidebar.slider("Limite Em Pé", 0, 40, value=get_val('stand_max', 32))
-    user_thresholds['pass_min'] = st.sidebar.slider("Limite Agachado", 70, 110, value=get_val('pass_min', 80))
+    user_thresholds['stand_max'] = st.sidebar.slider("Limite Em Pé", 0, 40, value=get_val('stand_max', 32), key=f"{exercise_type}_stand_max")
+    user_thresholds['pass_min'] = st.sidebar.slider("Limite Agachado", 70, 110, value=get_val('pass_min', 80), key=f"{exercise_type}_pass_min")
 
 elif exercise_type == "Supino Máquina":
     render_movement_header()
-    user_thresholds['extended_min'] = st.sidebar.slider("Braço Esticado", 140, 180, value=get_val('extended_min', 160))
-    user_thresholds['flexed_max'] = st.sidebar.slider("Braço Base", 40, 100, value=get_val('flexed_max', 80))
+    user_thresholds['extended_min'] = st.sidebar.slider("Braço Esticado", 140, 180, value=get_val('extended_min', 160), key=f"{exercise_type}_extended_min")
+    user_thresholds['flexed_max'] = st.sidebar.slider("Braço Base", 40, 100, value=get_val('flexed_max', 80), key=f"{exercise_type}_flexed_max")
     render_safety_header()
-    check = st.sidebar.checkbox("Alerta Cotovelo", value=get_val('check_safety', True))
+    check = st.sidebar.checkbox("Alerta Cotovelo", value=get_val('check_safety', True), key=f"{exercise_type}_check_safety")
     user_thresholds['check_safety'] = check
     if check:
-        user_thresholds['safety_limit'] = st.sidebar.slider("Limite Abertura", 60, 90, value=get_val('safety_limit', 80))
+        user_thresholds['safety_limit'] = st.sidebar.slider("Limite Abertura", 60, 90, value=get_val('safety_limit', 80), key=f"{exercise_type}_safety_limit")
 
 elif exercise_type == "Flexão de Braço":
     render_movement_header()
-    user_thresholds['pu_down'] = st.sidebar.slider("Ângulo Baixo", 60, 100, value=get_val('pu_down', 90))
-    user_thresholds['pu_up'] = st.sidebar.slider("Ângulo Alto", 150, 180, value=get_val('pu_up', 165))
+    user_thresholds['pu_down'] = st.sidebar.slider("Ângulo Baixo", 60, 100, value=get_val('pu_down', 90), key=f"{exercise_type}_pu_down")
+    user_thresholds['pu_up'] = st.sidebar.slider("Ângulo Alto", 150, 180, value=get_val('pu_up', 165), key=f"{exercise_type}_pu_up")
 
 elif exercise_type == "Rosca Direta":
     render_movement_header()
-    user_thresholds['bc_flex'] = st.sidebar.slider("Contração Máx", 30, 60, value=get_val('bc_flex', 45))
-    user_thresholds['bc_ext'] = st.sidebar.slider("Extensão Total", 140, 180, value=get_val('bc_ext', 160))
+    user_thresholds['bc_flex'] = st.sidebar.slider("Contração Máx", 30, 60, value=get_val('bc_flex', 45), key=f"{exercise_type}_bc_flex")
+    user_thresholds['bc_ext'] = st.sidebar.slider("Extensão Total", 140, 180, value=get_val('bc_ext', 160), key=f"{exercise_type}_bc_ext")
 
 elif exercise_type == "Desenvolvimento (Ombro)":
     render_movement_header()
-    user_thresholds['sp_up'] = st.sidebar.slider("Lockout", 150, 180, value=get_val('sp_up', 165))
-    user_thresholds['sp_down'] = st.sidebar.slider("Base", 60, 100, value=get_val('sp_down', 80))
+    user_thresholds['sp_up'] = st.sidebar.slider("Lockout", 150, 180, value=get_val('sp_up', 165), key=f"{exercise_type}_sp_up")
+    user_thresholds['sp_down'] = st.sidebar.slider("Base", 60, 100, value=get_val('sp_down', 80), key=f"{exercise_type}_sp_down")
 
 elif exercise_type == "Afundo (Lunge)":
     render_movement_header()
-    user_thresholds['lg_knee'] = st.sidebar.slider("Profundidade", 70, 110, value=get_val('lg_knee', 90))
+    user_thresholds['lg_knee'] = st.sidebar.slider("Profundidade", 70, 110, value=get_val('lg_knee', 90), key=f"{exercise_type}_lg_knee")
     render_safety_header()
-    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True))
+    check = st.sidebar.checkbox("Alerta Tronco", value=get_val('check_torso', True), key=f"{exercise_type}_check_torso")
     user_thresholds['check_torso'] = check
     if check:
-        user_thresholds['lg_torso'] = st.sidebar.slider("Inclinação Mínima", 70, 90, value=get_val('lg_torso', 80))
+        user_thresholds['lg_torso'] = st.sidebar.slider("Inclinação Mínima", 70, 90, value=get_val('lg_torso', 80), key=f"{exercise_type}_lg_torso")
 
 elif exercise_type == "Levantamento Terra":
     render_movement_header()
-    user_thresholds['dl_hip'] = st.sidebar.slider("Extensão Final", 160, 180, value=get_val('dl_hip', 170))
-    user_thresholds['dl_back'] = st.sidebar.slider("Limite Costas", 40, 90, value=get_val('dl_back', 60))
+    user_thresholds['dl_hip'] = st.sidebar.slider("Extensão Final", 160, 180, value=get_val('dl_hip', 170), key=f"{exercise_type}_dl_hip")
+    user_thresholds['dl_back'] = st.sidebar.slider("Limite Costas", 40, 90, value=get_val('dl_back', 60), key=f"{exercise_type}_dl_back")
 
 elif exercise_type == "Prancha (Plank)":
     render_movement_header()
-    user_thresholds['pk_min'] = st.sidebar.slider("Mínimo (Cair)", 150, 175, value=get_val('pk_min', 165))
-    user_thresholds['pk_max'] = st.sidebar.slider("Máximo (Empinar)", 175, 190, value=get_val('pk_max', 185))
+    user_thresholds['pk_min'] = st.sidebar.slider("Mínimo (Cair)", 150, 175, value=get_val('pk_min', 165), key=f"{exercise_type}_pk_min")
+    user_thresholds['pk_max'] = st.sidebar.slider("Máximo (Empinar)", 175, 190, value=get_val('pk_max', 185), key=f"{exercise_type}_pk_max")
 
 elif exercise_type == "Abdominal (Crunch)":
     render_movement_header()
-    user_thresholds['cr_flex'] = st.sidebar.slider("Contração", 40, 100, value=get_val('cr_flex', 70))
-    user_thresholds['cr_ext'] = st.sidebar.slider("Retorno", 110, 150, value=get_val('cr_ext', 130))
+    user_thresholds['cr_flex'] = st.sidebar.slider("Contração", 40, 100, value=get_val('cr_flex', 70), key=f"{exercise_type}_cr_flex")
+    user_thresholds['cr_ext'] = st.sidebar.slider("Retorno", 110, 150, value=get_val('cr_ext', 130), key=f"{exercise_type}_cr_ext")
 
 elif exercise_type == "Elevação Lateral":
     render_movement_header()
-    user_thresholds['lr_height'] = st.sidebar.slider("Topo (Ombro)", 70, 100, value=get_val('lr_height', 85))
-    user_thresholds['lr_low'] = st.sidebar.slider("Baixo (Descanso)", 10, 30, value=get_val('lr_low', 20))
+    user_thresholds['lr_height'] = st.sidebar.slider("Topo (Ombro)", 70, 100, value=get_val('lr_height', 85), key=f"{exercise_type}_lr_height")
+    user_thresholds['lr_low'] = st.sidebar.slider("Baixo (Descanso)", 10, 30, value=get_val('lr_low', 20), key=f"{exercise_type}_lr_low")
 
 # --- LÓGICA DOS BOTÕES ---
-# Atualiza o dicionário global com os valores atuais da tela antes de salvar
 if col_save.button("💾 Salvar Minhas Configs"):
     # Atualiza o dicionário da sessão com os valores atuais dos widgets
-    # Prefixo com o nome do exercício para não misturar
     for key, value in user_thresholds.items():
         st.session_state['user_configs'][f"{exercise_type}_{key}"] = value
     
@@ -309,8 +299,8 @@ if col_load.button("📂 Recarregar Nuvem"):
         # 2. Atualiza a memória de configs
         st.session_state['user_configs'] = configs_nuvem
         
-        # 3. TRUQUE: Limpa o estado dos widgets específicos deste exercício
-        # Isso força o Streamlit a esquecer o que o usuário mexeu e ler do 'value=' de novo
+        # 3. TRUQUE DE RESET: Limpa as variáveis de estado dos widgets para forçar o recarregamento
+        # Isso faz o Streamlit esquecer que o usuário "mexeu" no slider e usar o 'value=' da função get_val
         keys_to_clear = [k for k in st.session_state.keys() if k.startswith(exercise_type)]
         for k in keys_to_clear:
             del st.session_state[k]
@@ -506,4 +496,3 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Finalizada!")
         st.video(OUTPUT_PATH, format="video/webm")
-
