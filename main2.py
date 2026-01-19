@@ -578,7 +578,7 @@ if run_btn and video_path:
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
                 
                 # PLACAR NO VÍDEO (Pode manter se quiser, mas agora a sidebar já mostra)
-                cv2.rectangle(frame, (0, 0), (350, 100), (0, 0, 0), -1)
+                cv2.rectangle(frame, (0, 0), (400, 100), (0, 0, 0), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
                 if alert_msg: cv2.putText(frame, f"ALERTA: {alert_msg}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                 
@@ -601,5 +601,6 @@ if run_btn and video_path:
 
     except Exception as e:
         st.error(f"Erro Crítico: {e}")
+
 
 
