@@ -105,7 +105,7 @@ if 'logged_in' not in st.session_state:
 # --- TELA DE LOGIN ---
 
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🔒 Login AI Fitness</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🔒 Login: Visão Computacional para Exercícios</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,2,1])
     
     with col2:
@@ -601,6 +601,7 @@ if run_btn and video_path:
 
     except Exception as e:
         st.error(f"Erro Crítico: {e}")
+
 
 
 
