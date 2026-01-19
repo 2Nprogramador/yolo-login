@@ -569,13 +569,6 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Finalizada!")
         
-        # Mostra o placar final abaixo do vídeo também
-        st.write("### Resultado Final")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total", st.session_state.counter_total)
-        col2.metric("Corretos", st.session_state.counter_ok)
-        col3.metric("Incorretos", st.session_state.counter_no)
-        
         st.video(OUTPUT_PATH, format="video/webm")
 
     except Exception as e:
