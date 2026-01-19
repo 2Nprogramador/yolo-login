@@ -7,6 +7,7 @@ import time
 import hashlib
 import json 
 import datetime
+import requests # Necessário para baixar o modelo
 
 # --- BIBLIOTECA DE COOKIES ---
 import extra_streamlit_components as stx
@@ -335,7 +336,7 @@ if "counter" not in st.session_state: st.session_state.counter = 0 # Total
 if "counter_correct" not in st.session_state: st.session_state.counter_correct = 0 # Corretos
 if "counter_incorrect" not in st.session_state: st.session_state.counter_incorrect = 0 # Incorretos
 if "stage" not in st.session_state: st.session_state.stage = None # Lógica UP/DOWN
-if "has_error" not in st.session_state: st.session_state.has_error = False # Flag de erro na repetição
+if "has_error" not in st.session_state: st.session_state.has_error = False # Flag de erro
 
 run_btn = st.sidebar.button("⚙️ PROCESSAR VÍDEO")
 
@@ -348,12 +349,36 @@ if st.sidebar.button("🔄 Zerar Contador"):
     st.session_state.has_error = False
     st.rerun()
 
+# --- FUNÇÃO PARA BAIXAR MODELO (CORREÇÃO DE ERRO ZIP) ---
+def download_model_if_missing(model_path):
+    url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+    if not os.path.exists(model_path) or os.path.getsize(model_path) == 0:
+        with st.spinner("Baixando modelo de IA..."):
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    with open(model_path, 'wb') as f:
+                        f.write(response.content)
+                    return True
+            except:
+                st.error("Erro ao baixar modelo.")
+                return False
+    return True
+
 if run_btn and video_path:
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"Modelo não encontrado: {MODEL_PATH}")
-    else:
+    # Garante que o modelo existe e é válido
+    if not download_model_if_missing(MODEL_PATH):
+        st.stop()
+
+    try:
         base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-        options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
+        options = vision.PoseLandmarkerOptions(
+            base_options=base_options, 
+            running_mode=vision.RunningMode.VIDEO,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
         detector = vision.PoseLandmarker.create_from_options(options)
 
         cap = cv2.VideoCapture(video_path)
@@ -383,7 +408,7 @@ if run_btn and video_path:
             result = detector.detect_for_video(mp_image, int(timestamp_ms))
             timestamp_ms += (1000.0 / fps)
 
-            # --- Variáveis Locais do Frame ---
+            # --- Variáveis Locais ---
             current_state = st.session_state.last_state
             main_angle_display = 0
             alert_msg = ""
@@ -417,7 +442,7 @@ if run_btn and video_path:
                         torso_angle = calculate_angle(p_sh, p_hip, p_knee)
                         if torso_angle < user_thresholds.get('torso_limit', 70):
                             alert_msg = "TRONCO INCLINADO"
-                            st.session_state.has_error = True # Marca erro
+                            st.session_state.has_error = True
 
                 elif exercise_type == "Agachamento Padrão":
                     vertical_ref = [knee_l[0], knee_l[1] - 100]
@@ -522,10 +547,10 @@ if run_btn and video_path:
                         current_state = CONSTANTS['stages']['TRANSITION']
                     elif angle_body < user_thresholds['pk_min']:
                         current_state = CONSTANTS['stages']['DOWN']
-                        st.session_state.has_error = True # Prancha caindo é erro
+                        st.session_state.has_error = True 
                     else:
                         current_state = CONSTANTS['stages']['UP']
-                        st.session_state.has_error = True # Prancha alta é erro
+                        st.session_state.has_error = True 
 
                 elif exercise_type == "Abdominal (Crunch)":
                     angle_crunch = calculate_angle(sh_l, hip_l, knee_l)
@@ -545,17 +570,13 @@ if run_btn and video_path:
                     
                     if angle_abd >= user_thresholds['lr_height']:
                         current_state = CONSTANTS['stages']['UP']
-                        st.session_state.stage = "down" # Aqui UP é o pico do movimento
+                        st.session_state.stage = "down"
                     elif angle_abd < user_thresholds['lr_low']:
                         current_state = CONSTANTS['stages']['DOWN']
                     else:
                         current_state = CONSTANTS['stages']['TRANSITION']
 
-                # --- LÓGICA DE CONTAGEM UNIFICADA ---
-                # Verifica se completou o ciclo (Estava DOWN e foi para UP)
-                # Nota: Alguns exercícios (como Elevação Lateral) podem ter lógica inversa, ajustado acima.
-                
-                # Se o estado atual é UP e o anterior era DOWN (ou marcado como down)
+                # --- LÓGICA DE CONTAGEM ---
                 if current_state == CONSTANTS['stages']['UP'] and st.session_state.stage == "down":
                     st.session_state.counter += 1
                     
@@ -570,22 +591,16 @@ if run_btn and video_path:
 
                 st.session_state.last_state = current_state
                 
-                # Cores
                 s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
                 if alert_msg: 
                     s_color = (0, 0, 255)
-                    st.session_state.has_error = True # Garante que erro visual conta como erro lógico
+                    st.session_state.has_error = True
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
                 
-                # --- PLACAR VISUAL ---
-                # Caixa de Infos Status
+                # --- PLACAR ---
                 cv2.rectangle(frame, (0, 0), (300, 95), (20, 20, 20), -1)
-                
-                # Status Atual
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, s_color, 2)
-                
-                # Placar (Total / Correto / Incorreto)
                 cv2.putText(frame, f"TOTAL: {st.session_state.counter}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.putText(frame, f"OK: {st.session_state.counter_correct}", (130, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 cv2.putText(frame, f"NO: {st.session_state.counter_incorrect}", (220, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
@@ -601,12 +616,17 @@ if run_btn and video_path:
         cap.release()
         out.release()
         detector.close()
+        
         status.success("Análise Finalizada!")
         
-        # Mostra resultados finais na tela
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total", st.session_state.counter)
-        col2.metric("Corretos", st.session_state.counter_correct)
-        col3.metric("Incorretos", st.session_state.counter_incorrect)
+        # Exibe métricas ao final
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total", st.session_state.counter)
+        c2.metric("Corretos", st.session_state.counter_correct)
+        c3.metric("Incorretos", st.session_state.counter_incorrect)
         
         st.video(OUTPUT_PATH, format="video/webm")
+
+    except Exception as e:
+        st.error(f"Erro Crítico: {e}")
+        st.info("Dica: Verifique se a versão do Python no Streamlit Cloud é 3.10 ou 3.11.")
