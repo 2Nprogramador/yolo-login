@@ -584,7 +584,7 @@ if run_btn and video_path:
                 
                 cv2.putText(frame, f"TOTAL: {st.session_state.counter_total}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.putText(frame, f"OK: {st.session_state.counter_ok}", (140, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(frame, f"NO: {st.session_state.counter_no}", (230, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(frame, f"Incorreto: {st.session_state.counter_no}", (230, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
             out.write(frame)
             frame_idx += 1
@@ -601,3 +601,4 @@ if run_btn and video_path:
 
     except Exception as e:
         st.error(f"Erro Crítico: {e}")
+
