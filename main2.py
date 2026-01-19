@@ -217,7 +217,21 @@ def draw_visual_angle(frame, p1, p2, p3, text, color=(255,255,255), label=""):
 
 st.sidebar.header("1. Exercício & Configs")
 EXERCISE_OPTIONS = list(MOVEMENT_CONSTANTS.keys())
-exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS)
+
+# --- FUNÇÃO DE RESET AUTOMÁTICO ---
+def reset_counters():
+    st.session_state.counter_total = 0
+    st.session_state.counter_ok = 0
+    st.session_state.counter_no = 0
+    st.session_state.stage = None 
+    st.session_state.has_error = False
+
+# Selectbox com callback para zerar ao mudar
+exercise_type = st.sidebar.selectbox(
+    "Selecionar:", 
+    EXERCISE_OPTIONS,
+    on_change=reset_counters # Zera ao trocar exercício
+)
 
 # --- CONFIGS INICIAIS ---
 if 'user_configs' not in st.session_state:
@@ -236,22 +250,21 @@ if "counter_no" not in st.session_state: st.session_state.counter_no = 0
 if "stage" not in st.session_state: st.session_state.stage = None 
 if "has_error" not in st.session_state: st.session_state.has_error = False
 
-# --- EXIBIÇÃO DE PLACAR NA SIDEBAR ---
-# Isso garante que você veja o zero assim que a página recarrega
-st.sidebar.markdown("### 📊 Placar")
-col1, col2, col3 = st.sidebar.columns(3)
-col1.metric("Total", st.session_state.counter_total)
-col2.metric("✅", st.session_state.counter_ok)
-col3.metric("❌", st.session_state.counter_no)
+# --- EXIBIÇÃO DE PLACAR NA SIDEBAR (PLACEHOLDER) ---
+st.sidebar.markdown("### 📊 Placar Atual")
+# Criamos um container vazio que será atualizado durante o vídeo
+placar_container = st.sidebar.container()
 
-st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Zerar Placar", type="secondary", use_container_width=True):
-    st.session_state.counter_total = 0
-    st.session_state.counter_ok = 0
-    st.session_state.counter_no = 0
-    st.session_state.stage = None
-    st.session_state.has_error = False
-    st.rerun()
+# Função para atualizar o placar na sidebar em tempo real
+def update_sidebar_metrics():
+    with placar_container:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total", st.session_state.counter_total)
+        c2.metric("✅", st.session_state.counter_ok)
+        c3.metric("❌", st.session_state.counter_no)
+
+# Renderiza o estado inicial (zeros)
+update_sidebar_metrics()
 
 st.sidebar.markdown("---")
 
@@ -342,7 +355,15 @@ if st.sidebar.button("💾 Salvar Minhas Configs", type="primary", use_container
 # 7. UPLOAD E PROCESSAMENTO
 # ==========================================
 st.sidebar.markdown("---")
-uploaded_file = st.sidebar.file_uploader("3. Carregar Vídeo", type=["mp4", "mov", "avi", "webm"])
+# Adicionamos on_change para zerar ao trocar arquivo
+def on_upload_change():
+    reset_counters()
+
+uploaded_file = st.sidebar.file_uploader(
+    "3. Carregar Vídeo", 
+    type=["mp4", "mov", "avi", "webm"],
+    on_change=on_upload_change
+)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "pose_landmarker_lite.task")
@@ -361,7 +382,7 @@ if "last_state" not in st.session_state: st.session_state.last_state = "INICIO"
 
 run_btn = st.sidebar.button("⚙️ PROCESSAR VÍDEO")
 
-# --- FUNÇÃO DE SEGURANÇA: BAIXA MODELO SE ESTIVER CORROMPIDO ---
+# --- FUNÇÃO DE SEGURANÇA: BAIXA MODELO ---
 def download_model_if_missing(model_path):
     url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
     if not os.path.exists(model_path) or os.path.getsize(model_path) < 1000000:
@@ -378,7 +399,9 @@ def download_model_if_missing(model_path):
     return True
 
 if run_btn and video_path:
-    # 1. Valida o modelo antes de carregar
+    # Ao iniciar processamento, zeramos contadores para garantir frescor
+    reset_counters()
+    
     if not download_model_if_missing(MODEL_PATH):
         st.stop()
 
@@ -411,9 +434,9 @@ if run_btn and video_path:
         CONSTANTS = MOVEMENT_CONSTANTS[exercise_type]
 
         # Define lógica de contagem
-        COUNT_ON_RETURN_TO = CONSTANTS['stages']['UP'] # Padrão: Conta ao subir
+        COUNT_ON_RETURN_TO = CONSTANTS['stages']['UP'] # Padrão
         if exercise_type == "Elevação Lateral":
-            COUNT_ON_RETURN_TO = CONSTANTS['stages']['DOWN'] # Exceção
+            COUNT_ON_RETURN_TO = CONSTANTS['stages']['DOWN']
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -540,6 +563,10 @@ if run_btn and video_path:
                         st.session_state.counter_no += 1
                     else:
                         st.session_state.counter_ok += 1
+                    
+                    # Atualiza placar lateral
+                    update_sidebar_metrics()
+                    
                     # Reset
                     st.session_state.stage = None
                     st.session_state.has_error = False
@@ -550,7 +577,7 @@ if run_btn and video_path:
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
                 
-                # PLACAR NO VÍDEO
+                # PLACAR NO VÍDEO (Pode manter se quiser, mas agora a sidebar já mostra)
                 cv2.rectangle(frame, (0, 0), (320, 100), (0, 0, 0), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
                 if alert_msg: cv2.putText(frame, f"ALERTA: {alert_msg}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
@@ -569,6 +596,7 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Finalizada!")
         
+        # O vídeo fica aqui, sem as colunas de métricas embaixo
         st.video(OUTPUT_PATH, format="video/webm")
 
     except Exception as e:
