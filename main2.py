@@ -7,7 +7,7 @@ import time
 import hashlib
 import json 
 import datetime
-import requests # Essencial para corrigir o modelo
+import requests
 
 # --- BIBLIOTECA DE COOKIES ---
 import extra_streamlit_components as stx
@@ -236,8 +236,16 @@ if "counter_no" not in st.session_state: st.session_state.counter_no = 0
 if "stage" not in st.session_state: st.session_state.stage = None 
 if "has_error" not in st.session_state: st.session_state.has_error = False
 
+# --- EXIBIÇÃO DE PLACAR NA SIDEBAR ---
+# Isso garante que você veja o zero assim que a página recarrega
+st.sidebar.markdown("### 📊 Placar")
+col1, col2, col3 = st.sidebar.columns(3)
+col1.metric("Total", st.session_state.counter_total)
+col2.metric("✅", st.session_state.counter_ok)
+col3.metric("❌", st.session_state.counter_no)
+
 st.sidebar.markdown("---")
-if st.sidebar.button("🔄 Zerar Placar"):
+if st.sidebar.button("🔄 Zerar Placar", type="secondary", use_container_width=True):
     st.session_state.counter_total = 0
     st.session_state.counter_ok = 0
     st.session_state.counter_no = 0
@@ -354,11 +362,8 @@ if "last_state" not in st.session_state: st.session_state.last_state = "INICIO"
 run_btn = st.sidebar.button("⚙️ PROCESSAR VÍDEO")
 
 # --- FUNÇÃO DE SEGURANÇA: BAIXA MODELO SE ESTIVER CORROMPIDO ---
-# Isso corrige o erro RuntimeError: Unable to open zip archive
 def download_model_if_missing(model_path):
     url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-    
-    # Se não existe OU se é muito pequeno (sinal de corrupção ou LFS pointer)
     if not os.path.exists(model_path) or os.path.getsize(model_path) < 1000000:
         with st.spinner("Baixando modelo de IA (Correção automática)..."):
             try:
@@ -367,11 +372,8 @@ def download_model_if_missing(model_path):
                     with open(model_path, 'wb') as f:
                         f.write(response.content)
                     return True
-                else:
-                    st.error(f"Erro no download: {response.status_code}")
-                    return False
-            except Exception as e:
-                st.error(f"Erro ao baixar modelo: {e}")
+            except:
+                st.error("Erro ao baixar modelo.")
                 return False
     return True
 
@@ -548,7 +550,7 @@ if run_btn and video_path:
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
                 
-                # PLACAR
+                # PLACAR NO VÍDEO
                 cv2.rectangle(frame, (0, 0), (320, 100), (0, 0, 0), -1)
                 cv2.putText(frame, f"STATUS: {current_state}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
                 if alert_msg: cv2.putText(frame, f"ALERTA: {alert_msg}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
@@ -567,6 +569,8 @@ if run_btn and video_path:
         detector.close()
         status.success("Análise Finalizada!")
         
+        # Mostra o placar final abaixo do vídeo também
+        st.write("### Resultado Final")
         col1, col2, col3 = st.columns(3)
         col1.metric("Total", st.session_state.counter_total)
         col2.metric("Corretos", st.session_state.counter_ok)
