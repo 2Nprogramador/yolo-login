@@ -1,5 +1,5 @@
 opencv-python-headless
-mediapipe~=0.10.31
+mediapipe~=0.10.14
 
 numpy~=2.2.6
 
@@ -8,4 +8,5 @@ google-auth
 extra-streamlit-components
 
 requests
+
 
