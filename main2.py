@@ -7,6 +7,7 @@ import time
 import hashlib
 import json 
 import datetime
+import requests
 
 # --- BIBLIOTECA DE COOKIES ---
 import extra_streamlit_components as stx
@@ -104,7 +105,7 @@ if 'logged_in' not in st.session_state:
 # --- TELA DE LOGIN ---
 
 def login_page():
-    st.markdown("<h1 style='text-align: center;'>🔒 Login Análise de Exercícios com Visão Computacional</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center;'>🔒 Login AI Fitness</h1>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1,2,1])
     
     with col2:
@@ -218,16 +219,32 @@ st.sidebar.header("1. Exercício & Configs")
 EXERCISE_OPTIONS = list(MOVEMENT_CONSTANTS.keys())
 exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS)
 
-# Inicializa o dicionário de configs na sessão se não existir
+# --- CONFIGS INICIAIS ---
 if 'user_configs' not in st.session_state:
     st.session_state['user_configs'] = {}
 
-# Função auxiliar para pegar valores salvos (ou padrão)
 def get_val(key, default):
     full_key = f"{exercise_type}_{key}"
     return st.session_state['user_configs'].get(full_key, default)
 
 user_thresholds = {} 
+
+# --- VARIÁVEIS DE CONTAGEM NA SESSÃO ---
+if "counter_total" not in st.session_state: st.session_state.counter_total = 0
+if "counter_ok" not in st.session_state: st.session_state.counter_ok = 0
+if "counter_no" not in st.session_state: st.session_state.counter_no = 0
+if "stage" not in st.session_state: st.session_state.stage = None 
+if "has_error" not in st.session_state: st.session_state.has_error = False # A memória do erro
+
+# Botão de Resetar Contador
+st.sidebar.markdown("---")
+if st.sidebar.button("🔄 Zerar Placar"):
+    st.session_state.counter_total = 0
+    st.session_state.counter_ok = 0
+    st.session_state.counter_no = 0
+    st.session_state.stage = None
+    st.session_state.has_error = False
+    st.rerun()
 
 st.sidebar.markdown("---")
 
@@ -337,12 +354,35 @@ if "last_state" not in st.session_state: st.session_state.last_state = "INICIO"
 
 run_btn = st.sidebar.button("⚙️ PROCESSAR VÍDEO")
 
+# --- FUNÇÃO PARA BAIXAR MODELO (CORREÇÃO DE ERRO ZIP) ---
+def download_model_if_missing(model_path):
+    url = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+    if not os.path.exists(model_path) or os.path.getsize(model_path) == 0:
+        with st.spinner("Baixando modelo de IA..."):
+            try:
+                response = requests.get(url)
+                if response.status_code == 200:
+                    with open(model_path, 'wb') as f:
+                        f.write(response.content)
+                    return True
+            except:
+                st.error("Erro ao baixar modelo.")
+                return False
+    return True
+
 if run_btn and video_path:
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"Modelo não encontrado: {MODEL_PATH}")
-    else:
+    if not download_model_if_missing(MODEL_PATH):
+        st.stop()
+
+    try:
         base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-        options = vision.PoseLandmarkerOptions(base_options=base_options, running_mode=vision.RunningMode.VIDEO)
+        options = vision.PoseLandmarkerOptions(
+            base_options=base_options, 
+            running_mode=vision.RunningMode.VIDEO,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5
+        )
         detector = vision.PoseLandmarker.create_from_options(options)
 
         cap = cv2.VideoCapture(video_path)
@@ -362,6 +402,16 @@ if run_btn and video_path:
         frame_idx = 0
         CONSTANTS = MOVEMENT_CONSTANTS[exercise_type]
 
+        # Define estados de descanso e atividade para a contagem
+        # A maioria dos exercícios conta quando volta para "UP".
+        # Exceção: Elevação Lateral e similares onde "UP" é o esforço e "DOWN" é o descanso.
+        COUNT_ON_RETURN_TO = CONSTANTS['stages']['UP'] # Padrão
+        ACTIVE_STAGE = "down" # Padrão: descer é o esforço
+        
+        if exercise_type == "Elevação Lateral":
+            COUNT_ON_RETURN_TO = CONSTANTS['stages']['DOWN']
+            ACTIVE_STAGE = "up"
+
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret: break
@@ -372,6 +422,7 @@ if run_btn and video_path:
             result = detector.detect_for_video(mp_image, int(timestamp_ms))
             timestamp_ms += (1000.0 / fps)
 
+            # --- Variáveis Locais ---
             current_state = st.session_state.last_state
             main_angle_display = 0
             alert_msg = ""
@@ -460,8 +511,12 @@ if run_btn and video_path:
                     angle_body = calculate_angle(sh_l, hip_l, ank_l)
                     main_angle_display = angle_body; vis_p1,vis_p2,vis_p3 = sh_l,hip_l,ank_l; label_angle = "Corpo"
                     if user_thresholds['pk_min'] <= angle_body <= user_thresholds['pk_max']: current_state = CONSTANTS['stages']['TRANSITION']
-                    elif angle_body < user_thresholds['pk_min']: current_state = CONSTANTS['stages']['DOWN']
-                    else: current_state = CONSTANTS['stages']['UP']
+                    elif angle_body < user_thresholds['pk_min']: 
+                        current_state = CONSTANTS['stages']['DOWN']
+                        alert_msg = "QUADRIL MUITO BAIXO" # Na prancha, isso é erro
+                    else: 
+                        current_state = CONSTANTS['stages']['UP']
+                        alert_msg = "QUADRIL MUITO ALTO" # Na prancha, isso é erro
 
                 elif exercise_type == "Abdominal (Crunch)":
                     angle_crunch = calculate_angle(sh_l, hip_l, knee_l)
@@ -477,16 +532,50 @@ if run_btn and video_path:
                     elif angle_abd < user_thresholds['lr_low']: current_state = CONSTANTS['stages']['DOWN']
                     else: current_state = CONSTANTS['stages']['TRANSITION']
 
+                # --- MÁQUINA DE ESTADOS DO CONTADOR ---
+                
+                # 1. Detecta erro e marca a repetição como suja (dirty)
+                if alert_msg != "":
+                    st.session_state.has_error = True
+                    s_color = (0, 0, 255) # Vermelho
+                else:
+                    s_color = (0, 255, 0) # Verde
+                
+                # 2. Lógica de Estágio (Entrou na fase ativa?)
+                # Se o estado atual não for o de descanso (UP) nem Transição, ele está na fase ativa (DOWN)
+                if current_state != COUNT_ON_RETURN_TO and current_state != CONSTANTS['stages']['TRANSITION']:
+                    st.session_state.stage = "midpoint" # Marcou o ponto médio do movimento
+
+                # 3. Gatilho de Contagem (Voltou para o descanso?)
+                if current_state == COUNT_ON_RETURN_TO and st.session_state.stage == "midpoint":
+                    st.session_state.counter_total += 1
+                    
+                    if st.session_state.has_error:
+                        st.session_state.counter_no += 1
+                    else:
+                        st.session_state.counter_ok += 1
+                    
+                    # Reseta para a próxima repetição
+                    st.session_state.stage = None
+                    st.session_state.has_error = False
+
                 st.session_state.last_state = current_state
-                s_color = (0, 255, 0) if current_state in [CONSTANTS['stages']['UP'], CONSTANTS['stages']['DOWN']] else (0, 255, 255)
-                if alert_msg: s_color = (0, 0, 255)
 
                 if vis_p1: draw_visual_angle(frame, vis_p1, vis_p2, vis_p3, f"{int(main_angle_display)}", s_color, label_angle)
                 
-                box_h = 85 if alert_msg else 60
-                cv2.rectangle(frame, (0, 0), (w, box_h), (20, 20, 20), -1)
-                cv2.putText(frame, f"STATUS: {current_state}", (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.8, s_color, 2)
-                if alert_msg: cv2.putText(frame, f"ALERTA: {alert_msg}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                # --- PLACAR NO VÍDEO ---
+                # Caixa preta de fundo
+                cv2.rectangle(frame, (0, 0), (320, 100), (0, 0, 0), -1)
+                
+                # Texto do Status e Alerta
+                cv2.putText(frame, f"STATUS: {current_state}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                if alert_msg:
+                    cv2.putText(frame, f"ALERTA: {alert_msg}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                
+                # O Placar Numérico
+                cv2.putText(frame, f"TOTAL: {st.session_state.counter_total}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"OK: {st.session_state.counter_ok}", (140, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"NO: {st.session_state.counter_no}", (230, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
             out.write(frame)
             frame_idx += 1
@@ -496,8 +585,17 @@ if run_btn and video_path:
         cap.release()
         out.release()
         detector.close()
+        
         status.success("Análise Finalizada!")
+        
+        # Mostra Métricas Finais na Interface
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Realizado", st.session_state.counter_total)
+        m2.metric("Movimentos Corretos", st.session_state.counter_ok)
+        m3.metric("Com Erros", st.session_state.counter_no)
+        
         st.video(OUTPUT_PATH, format="video/webm")
 
-
-
+    except Exception as e:
+        st.error(f"Erro Crítico: {e}")
+        st.info("Dica: Verifique se a versão do Python no Streamlit Cloud é 3.10 ou 3.11.")
