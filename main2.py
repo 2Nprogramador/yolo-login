@@ -250,20 +250,19 @@ if "counter_no" not in st.session_state: st.session_state.counter_no = 0
 if "stage" not in st.session_state: st.session_state.stage = None 
 if "has_error" not in st.session_state: st.session_state.has_error = False
 
-# --- EXIBIÇÃO DE PLACAR NA SIDEBAR (PLACEHOLDER) ---
+# --- EXIBIÇÃO DE PLACAR NA SIDEBAR (CONTAINER ÚNICO) ---
 st.sidebar.markdown("### 📊 Placar Atual")
-# Criamos um container vazio que será atualizado durante o vídeo
-placar_container = st.sidebar.container()
+placar_placeholder = st.sidebar.empty() # Container único
 
-# Função para atualizar o placar na sidebar em tempo real
+# Função para atualizar o placar
 def update_sidebar_metrics():
-    with placar_container:
+    with placar_placeholder.container():
         c1, c2, c3 = st.columns(3)
         c1.metric("Total", st.session_state.counter_total)
         c2.metric("✅", st.session_state.counter_ok)
         c3.metric("❌", st.session_state.counter_no)
 
-# Renderiza o estado inicial (zeros)
+# Renderiza o estado inicial
 update_sidebar_metrics()
 
 st.sidebar.markdown("---")
@@ -399,8 +398,9 @@ def download_model_if_missing(model_path):
     return True
 
 if run_btn and video_path:
-    # Ao iniciar processamento, zeramos contadores para garantir frescor
+    # Reset para garantir frescor
     reset_counters()
+    update_sidebar_metrics() # Limpa visualmente o placar
     
     if not download_model_if_missing(MODEL_PATH):
         st.stop()
