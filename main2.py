@@ -114,13 +114,12 @@ def gerar_relatorio_pdf(username, exercicio, dados_log, placar, config_usada):
         pdf.cell(30, 8, log['tempo'], 1, 0, 'C')
         
         erros_msg = log['erros'] if log['erros'] else "-"
-        # Usa multi_cell se o texto for longo, senao cell normal
+        # Usa multi_cell se o texto for longo
         if len(erros_msg) > 60:
-             # Gambiarra para alinhar multicell em tabela
              x = pdf.get_x()
              y = pdf.get_y()
              pdf.multi_cell(0, 8, erros_msg, 1, 'L')
-             pdf.set_xy(x, y + 8) # Avança só uma linha (pode sobrepor se for mto grande, ideal ajustar altura)
+             pdf.set_xy(x, y + 8) 
         else:
              pdf.cell(0, 8, erros_msg, 1, 1, 'L')
 
@@ -267,7 +266,7 @@ MOVEMENT_CONSTANTS = {
     "Agachamento Padrão": { "stages": {"UP": "EM PE", "DOWN": "AGACHAMENTO OK", "TRANSITION": "DESCENDO"} },
     "Supino Máquina": { "stages": {"UP": "BRACO ESTICADO", "DOWN": "NA BASE", "TRANSITION": "EMPURRANDO"} },
     "Flexão de Braço": { "stages": {"UP": "EM CIMA (OK)", "DOWN": "EMBAIXO (OK)", "TRANSITION": "MOVIMENTO"} },
-    "Rosca Direta": { "stages": {"UP": "ESTICADO", "DOWN": "CONTRAIDO", "TRANSITION": "MOVIMENTO"} },
+    "Rosca Direta": { "stages": {"UP": "ESTICADO", "DOWN": "CONTRAIDO", "TRANSITION": "EM ACAO"} },
     "Desenvolvimento (Ombro)": { "stages": {"UP": "TOPO (LOCKOUT)", "DOWN": "BASE", "TRANSITION": "MOVIMENTO"} },
     "Afundo (Lunge)": { "stages": {"UP": "DESCENDO", "DOWN": "BOM AFUNDO", "TRANSITION": "DESCENDO"} },
     "Levantamento Terra": { "stages": {"UP": "TOPO (ERETO)", "DOWN": "POSICAO INICIAL", "TRANSITION": "LEVANTANDO"} },
@@ -343,7 +342,7 @@ if "has_error" not in st.session_state: st.session_state.has_error = False
 if "rep_log" not in st.session_state: st.session_state.rep_log = []
 if "erros_na_rep_atual" not in st.session_state: st.session_state.erros_na_rep_atual = set()
 
-# --- EXIBIÇÃO DE PLACAR NA SIDEBAR ---
+# --- EXIBIÇÃO DE PLACAR NA SIDEBAR (CONTAINER ÚNICO) ---
 st.sidebar.markdown("### 📊 Placar Atual")
 placar_placeholder = st.sidebar.empty()
 
