@@ -73,7 +73,7 @@ def carregar_config_usuario(username):
         except: pass 
     return {}
 
-# --- GERADOR DE PDF ---
+# --- GERADOR DE PDF (ATUALIZADO PARA CONFIGS ATUAIS) ---
 def gerar_relatorio_pdf(username, exercicio, dados_log, placar, config_usada):
     pdf = FPDF()
     pdf.add_page()
@@ -97,19 +97,22 @@ def gerar_relatorio_pdf(username, exercicio, dados_log, placar, config_usada):
     pdf.set_text_color(0, 0, 0)
     pdf.ln(5)
 
-    # Regras
+    # Regras (AGORA MOSTRA EXATAMENTE O QUE O USUÁRIO MARCOU)
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Parametros de Seguranca Ativos", ln=True)
+    pdf.cell(0, 10, "Parametros de Analise Utilizados (Config Atual)", ln=True)
     pdf.set_font("Courier", "", 9)
-    prefixo = f"{exercicio}_"
-    tem_config = False
-    for chave, valor in config_usada.items():
-        if chave.startswith(prefixo):
-            nome = chave.replace(prefixo, "").upper()
+    
+    # Itera diretamente sobre o dicionário limpo passado
+    if config_usada:
+        for chave, valor in config_usada.items():
+            nome = chave.replace("_", " ").upper()
             val_str = "ATIVADO" if isinstance(valor, bool) and valor else str(valor)
+            if isinstance(valor, bool) and not valor:
+                val_str = "DESATIVADO"
             pdf.cell(0, 5, f"{nome}: {val_str}", ln=True)
-            tem_config = True
-    if not tem_config: pdf.cell(0, 5, "Padrao do sistema.", ln=True)
+    else:
+        pdf.cell(0, 5, "Nenhum parametro especifico detectado.", ln=True)
+        
     pdf.ln(5)
 
     # Log Detalhado
@@ -243,7 +246,7 @@ def reset_counters():
     st.session_state.has_error = False
     st.session_state.rep_log = [] 
     st.session_state.erros_na_rep_atual = set()
-    st.session_state.processed = False # Resetar estado de processamento
+    st.session_state.processed = False
 
 exercise_type = st.sidebar.selectbox("Selecionar:", EXERCISE_OPTIONS, on_change=reset_counters)
 
@@ -254,11 +257,9 @@ user_thresholds = {}
 if "counter_total" not in st.session_state: reset_counters()
 if "processed" not in st.session_state: st.session_state.processed = False
 
-# --- PLACAR ---
 st.sidebar.markdown("### 📊 Placar Atual")
 placar_placeholder = st.sidebar.empty()
-# --- BOTÃO DOWNLOAD (PLACEHOLDER) ---
-btn_placeholder = st.sidebar.empty()
+btn_placeholder = st.sidebar.empty() # Placeholder para o botão
 
 def update_sidebar_metrics():
     with placar_placeholder.container():
@@ -332,6 +333,10 @@ elif exercise_type == "Elevação Lateral":
     user_thresholds['lr_height'] = st.sidebar.slider("Topo (Ombro)", 70, 100, value=get_val('lr_height', 85), key=f"{exercise_type}_lr_height")
     user_thresholds['lr_low'] = st.sidebar.slider("Baixo (Descanso)", 10, 30, value=get_val('lr_low', 20), key=f"{exercise_type}_lr_low")
     user_thresholds['check_high_shoulder'] = st.sidebar.checkbox("Alerta Ombro Alto", value=get_val('check_high_shoulder', True), key=f"{exercise_type}_check_high_shoulder")
+
+# --- PERSISTÊNCIA DOS THRESHOLDS ATUAIS ---
+# Salvamos as configs atuais em sessão para o PDF poder usar mesmo que não salvas no banco
+st.session_state.current_thresholds = user_thresholds
 
 st.sidebar.markdown("---")
 if st.sidebar.button("💾 Salvar Minhas Configs", type="primary"):
@@ -623,12 +628,13 @@ if st.session_state.get('processed', False):
         'no': st.session_state.counter_no
     }
     
+    # IMPORTANTE: Passamos st.session_state.current_thresholds ao invés das configs salvas
     pdf_bytes = gerar_relatorio_pdf(
         st.session_state.get('user_name', 'Atleta'),
         exercise_type,
         st.session_state.rep_log,
         placar_dados,
-        st.session_state['user_configs']
+        st.session_state.get('current_thresholds', {}) # Usa as configs capturadas em tempo real
     )
     
     btn_placeholder.download_button(
